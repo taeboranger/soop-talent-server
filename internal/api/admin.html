@@ -330,9 +330,7 @@ async function start() {
     history.replaceState(null, "", location.pathname);
   }
   if (err) msg("bad", err);
-  // 새 OAuth 로그인은 HttpOnly 쿠키만 설정한다. 기존 토큰도 호환용으로
-  // 받아들이지만, 토큰이 없어도 먼저 쿠키 세션을 확인한다.
-  start();
+  if (token) start(); else { signOut(); loadProviders(); }
 })();
 </script>
 </body>

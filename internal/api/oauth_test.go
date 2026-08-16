@@ -71,19 +71,6 @@ func TestValidateRedirect_허용목록(t *testing.T) {
 	}
 }
 
-func TestExtensionFlowParams(t *testing.T) {
-	validChallenge := "aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-abcdefgh"
-	validState := "abcdefghijklmnopqrstuvwxyzABCDEF0123456789_-"
-	r := httptest.NewRequest("GET", "/?code_challenge="+validChallenge+"&client_state="+validState, nil)
-	if gotChallenge, gotState, err := extensionFlowParams(r); err != nil || gotChallenge != validChallenge || gotState != validState {
-		t.Fatalf("valid params rejected: challenge=%q state=%q err=%v", gotChallenge, gotState, err)
-	}
-	bad := httptest.NewRequest("GET", "/?code_challenge=short&client_state=bad!state", nil)
-	if _, _, err := extensionFlowParams(bad); err == nil {
-		t.Fatal("invalid PKCE params must be rejected")
-	}
-}
-
 func TestOAuthStateCookieMatches(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/oauth/google/callback?state=state", nil)
 	r.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: "state"})

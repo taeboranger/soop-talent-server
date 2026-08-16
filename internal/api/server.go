@@ -132,30 +132,8 @@ func bearer(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 }
 
-const sessionCookieName = "sooptalent_session"
-
-// sessionToken은 확장의 Bearer 토큰을 우선하고, 웹에서는 JavaScript가 읽을 수
-// 없는 HttpOnly 쿠키를 쓴다. 두 방식 모두 같은 서버 세션 행을 가리킨다.
 func sessionToken(r *http.Request) string {
-	if token := bearer(r); token != "" {
-		return token
-	}
-	c, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return ""
-	}
-	return c.Value
-}
-
-func setSessionCookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: token, Path: "/", MaxAge: int(auth.SessionTTL.Seconds()),
-		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	return bearer(r)
 }
 
 // session은 로그인만 요구한다.
@@ -204,12 +182,9 @@ func bidOf(r *http.Request) string {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) error {
-	// 웹과 확장이 같은 계정 세션을 공유하는 경험을 제공하므로, 명시적 로그아웃은
-	// 이 계정이 발급받은 모든 세션을 같이 폐기한다.
-	if err := auth.LogoutAccount(r.Context(), s.Store.Pool, accountOf(r).ID); err != nil {
+	if err := auth.Logout(r.Context(), s.Store.Pool, sessionToken(r)); err != nil {
 		return err
 	}
-	clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
