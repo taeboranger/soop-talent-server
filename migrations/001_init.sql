@@ -1,6 +1,6 @@
 -- SoopTalent MySQL 8 초기 스키마.
--- 이 파일 하나가 전체 스키마다. 새 DB에서 한 번 성공하면 schema_migrations에
--- 기록되므로 Pod가 재시작되어도 다시 실행되지 않는다.
+-- 새 DB의 기본 스키마다. 적용 이력은 schema_migrations에 기록되므로
+-- Pod가 재시작되어도 다시 실행되지 않는다.
 -- 모든 CREATE는 IF NOT EXISTS여서 최초 실행 중 Pod가 끊겨도 다음 실행이 이어받는다.
 
 CREATE TABLE IF NOT EXISTS streamers (
