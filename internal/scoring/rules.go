@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // Rules는 달란트 기준 전체다.
@@ -91,14 +91,14 @@ const rulesKey = "rules"
 
 // Load는 저장된 규칙을 읽는다. 없거나 일부 항목이 비어 있으면 기본값으로 채운다.
 // 새 항목을 추가해도 기존 설정이 깨지지 않는다.
-func Load(ctx context.Context, pool *pgxpool.Pool, bid string) (Rules, error) {
+func Load(ctx context.Context, pool *store.DB, bid string) (Rules, error) {
 	out := DefaultRules()
 
 	var raw []byte
 	err := pool.QueryRow(ctx,
 		`SELECT value FROM scoring_rules WHERE bid = $1 AND key = $2`, bid, rulesKey).Scan(&raw)
 	if err != nil {
-		// 행이 없으면 기본값. pgx는 no rows를 오류로 돌려주므로 구분하지 않고 기본값을 쓴다.
+		// 행이 없으면 기본값을 쓴다.
 		return out, nil
 	}
 	if len(raw) == 0 {
@@ -111,20 +111,19 @@ func Load(ctx context.Context, pool *pgxpool.Pool, bid string) (Rules, error) {
 	return out, nil
 }
 
-func Save(ctx context.Context, pool *pgxpool.Pool, bid string, r Rules) error {
+func Save(ctx context.Context, pool *store.DB, bid string, r Rules) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
 	_, err = pool.Exec(ctx, `
 		INSERT INTO scoring_rules (bid, key, value) VALUES ($1, $2, $3)
-		ON CONFLICT (bid, key) DO UPDATE
-		   SET value = EXCLUDED.value, updated_at = now()`,
+		ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW(6)`,
 		bid, rulesKey, b)
 	return err
 }
 
-func Reset(ctx context.Context, pool *pgxpool.Pool, bid string) (Rules, error) {
+func Reset(ctx context.Context, pool *store.DB, bid string) (Rules, error) {
 	def := DefaultRules()
 	return def, Save(ctx, pool, bid, def)
 }

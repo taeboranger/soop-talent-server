@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // Event는 적립 한 건이다.
@@ -71,12 +70,12 @@ func KindLabel(kind string) string {
 
 // Award는 이벤트들을 적립한다. 중복 idem_key는 건너뛴다.
 // 실제로 삽입된 건수를 돌려준다.
-func Award(ctx context.Context, pool *pgxpool.Pool, events []Event) (int, error) {
+func Award(ctx context.Context, pool *store.DB, events []Event) (int, error) {
 	if len(events) == 0 {
 		return 0, nil
 	}
 
-	batch := &pgx.Batch{}
+	inserted := 0
 	for _, e := range events {
 		if e.Amount == 0 || e.UserID == "" || e.IdemKey == "" {
 			continue
@@ -85,27 +84,16 @@ func Award(ctx context.Context, pool *pgxpool.Pool, events []Event) (int, error)
 		if err != nil {
 			meta = []byte("null")
 		}
-		batch.Queue(`
-			INSERT INTO point_events
+		tag, err := pool.Exec(ctx, `
+			INSERT IGNORE INTO point_events
 			       (bid, user_id, kind, amount, occurred_at, idem_key, broad_no, meta, reason)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9,''))
-			ON CONFLICT (bid, idem_key) DO NOTHING`,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9,''))`,
 			e.BID, e.UserID, e.Kind, e.Amount, e.OccurredAt, e.IdemKey, e.BroadNo, meta, e.Reason)
-	}
-	if batch.Len() == 0 {
-		return 0, nil
-	}
-
-	br := pool.SendBatch(ctx, batch)
-	defer br.Close()
-
-	inserted := 0
-	for range batch.Len() {
-		tag, err := br.Exec()
 		if err != nil {
 			return inserted, fmt.Errorf("적립 실패: %w", err)
 		}
-		inserted += int(tag.RowsAffected())
+		n, _ := tag.RowsAffected()
+		inserted += int(n)
 	}
 	return inserted, nil
 }
@@ -122,7 +110,7 @@ type RankRow struct {
 //
 // 멱등키가 `rank:{kind}:{date}:{user}` 형태이므로 같은 날짜를 몇 번 올려도
 // 중복 적립되지 않는다. 확장이 최근 7일을 매번 다시 올리는 이유가 이것이다.
-func IngestRanking(ctx context.Context, pool *pgxpool.Pool, bid, kind, date string, rows []RankRow, r Rules) (int, error) {
+func IngestRanking(ctx context.Context, pool *store.DB, bid, kind, date string, rows []RankRow, r Rules) (int, error) {
 	switch kind {
 	case "watch":
 		if !r.Rank.EnableWatch {

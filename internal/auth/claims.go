@@ -2,14 +2,13 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/sooptalent/server/internal/apperr"
+	"github.com/sooptalent/server/internal/store"
 )
 
 var (
@@ -40,7 +39,7 @@ type Claim struct {
 
 // SubmitClaim은 연결 신청을 등록한다.
 // 신청만으로는 아무 권한도 생기지 않는다 — 관리자가 승인해야 한다.
-func SubmitClaim(ctx context.Context, pool *pgxpool.Pool, accountID int64, bid, nick string) (*Claim, error) {
+func SubmitClaim(ctx context.Context, pool *store.DB, accountID int64, bid, nick string) (*Claim, error) {
 	bid = strings.TrimSpace(bid)
 	if bid == "" {
 		return nil, apperr.New("SOOP 아이디를 입력해 주세요")
@@ -54,24 +53,24 @@ func SubmitClaim(ctx context.Context, pool *pgxpool.Pool, accountID int64, bid, 
 	if err == nil && ownerID != accountID {
 		return nil, ErrBidTaken
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
-	var c Claim
-	err = pool.QueryRow(ctx, `
+	_, err = pool.Exec(ctx, `
 		INSERT INTO streamer_claims (account_id, bid, soop_nick)
 		VALUES ($1, $2, NULLIF($3,''))
-		ON CONFLICT (account_id, lower(bid)) DO UPDATE
-		   SET soop_nick = COALESCE(NULLIF(EXCLUDED.soop_nick,''), streamer_claims.soop_nick),
+		ON DUPLICATE KEY UPDATE
+		   soop_nick = COALESCE(NULLIF(VALUES(soop_nick),''), soop_nick),
 		       -- 거절된 신청은 다시 대기 상태로 되돌린다
-		       status = CASE WHEN streamer_claims.status = 'rejected'
-		                     THEN 'pending' ELSE streamer_claims.status END,
-		       requested_at = CASE WHEN streamer_claims.status = 'rejected'
-		                          THEN now() ELSE streamer_claims.requested_at END
-		RETURNING id, account_id, bid, COALESCE(soop_nick,''), status,
-		          COALESCE(note,''), requested_at, decided_at`,
-		accountID, bid, nick).
+		       requested_at = IF(status = 'rejected', NOW(6), requested_at),
+		       status = IF(status = 'rejected', 'pending', status)`, accountID, bid, nick)
+	if err != nil {
+		return nil, err
+	}
+	var c Claim
+	err = pool.QueryRow(ctx, `SELECT id, account_id, bid, COALESCE(soop_nick,''), status, COALESCE(note,''), requested_at, decided_at
+        FROM streamer_claims WHERE account_id = $1 AND bid = $2`, accountID, bid).
 		Scan(&c.ID, &c.AccountID, &c.BID, &c.SoopNick, &c.Status, &c.Note, &c.RequestedAt, &c.DecidedAt)
 	if err != nil {
 		return nil, err
@@ -80,7 +79,7 @@ func SubmitClaim(ctx context.Context, pool *pgxpool.Pool, accountID int64, bid, 
 }
 
 // MyClaims는 한 계정의 신청 목록을 돌려준다.
-func MyClaims(ctx context.Context, pool *pgxpool.Pool, accountID int64) ([]Claim, error) {
+func MyClaims(ctx context.Context, pool *store.DB, accountID int64) ([]Claim, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, account_id, bid, COALESCE(soop_nick,''), status,
 		       COALESCE(note,''), requested_at, decided_at
@@ -96,13 +95,13 @@ func MyClaims(ctx context.Context, pool *pgxpool.Pool, accountID int64) ([]Claim
 // ApprovedBID는 계정이 관리할 수 있는 SOOP 아이디를 돌려준다.
 //
 // **모든 권한 판단의 단일 진입점이다.** 클라이언트가 보낸 아이디는 절대 쓰지 않는다.
-func ApprovedBID(ctx context.Context, pool *pgxpool.Pool, accountID int64) (string, error) {
+func ApprovedBID(ctx context.Context, pool *store.DB, accountID int64) (string, error) {
 	var bid string
 	err := pool.QueryRow(ctx, `
 		SELECT bid FROM streamer_claims
 		 WHERE account_id = $1 AND status = 'approved'
-		 ORDER BY decided_at NULLS LAST LIMIT 1`, accountID).Scan(&bid)
-	if errors.Is(err, pgx.ErrNoRows) {
+		 ORDER BY decided_at IS NULL, decided_at LIMIT 1`, accountID).Scan(&bid)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNoApprovedBid
 	}
 	return bid, err
@@ -113,7 +112,7 @@ func ApprovedBID(ctx context.Context, pool *pgxpool.Pool, accountID int64) (stri
 // ---------------------------------------------------------------------------
 
 // ListClaims는 관리자 화면용 목록이다. status가 비면 전체.
-func ListClaims(ctx context.Context, pool *pgxpool.Pool, status string) ([]Claim, error) {
+func ListClaims(ctx context.Context, pool *store.DB, status string) ([]Claim, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT c.id, c.account_id, a.email, c.bid, COALESCE(c.soop_nick,''), c.status,
 		       COALESCE(c.note,''), c.requested_at, c.decided_at
@@ -139,37 +138,38 @@ func ListClaims(ctx context.Context, pool *pgxpool.Pool, status string) ([]Claim
 }
 
 // Decide는 신청을 승인하거나 거절한다. 승인된 아이디는 수집이 시작된다.
-func Decide(ctx context.Context, pool *pgxpool.Pool, claimID, adminID int64, approve bool, note string) (*Claim, error) {
+func Decide(ctx context.Context, pool *store.DB, claimID, adminID int64, approve bool, note string) (*Claim, error) {
 	status := StatusRejected
 	if approve {
 		status = StatusApproved
 	}
 
-	var c Claim
-	err := pool.QueryRow(ctx, `
+	tag, err := pool.Exec(ctx, `
 		UPDATE streamer_claims
-		   SET status = $2, note = NULLIF($3,''), decided_at = now(), decided_by = $4
-		 WHERE id = $1
-		RETURNING id, account_id, bid, COALESCE(soop_nick,''), status,
-		          COALESCE(note,''), requested_at, decided_at`,
-		claimID, string(status), note, adminID).
-		Scan(&c.ID, &c.AccountID, &c.BID, &c.SoopNick, &c.Status, &c.Note, &c.RequestedAt, &c.DecidedAt)
+		   SET status = $2, note = NULLIF($3,''), decided_at = NOW(6), decided_by = $4
+		 WHERE id = $1`, claimID, string(status), note, adminID)
 
 	if err != nil {
-		// 부분 유니크 인덱스 위반 = 그 아이디가 이미 다른 계정에 승인돼 있다.
-		if strings.Contains(err.Error(), "streamer_claims_approved_bid_uniq") {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return nil, ErrBidTaken
 		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.New("신청을 찾을 수 없습니다")
-		}
+		return nil, err
+	}
+	n, _ := tag.RowsAffected()
+	if n == 0 {
+		return nil, apperr.New("신청을 찾을 수 없습니다")
+	}
+	var c Claim
+	err = pool.QueryRow(ctx, `SELECT id, account_id, bid, COALESCE(soop_nick,''), status, COALESCE(note,''), requested_at, decided_at FROM streamer_claims WHERE id = $1`, claimID).
+		Scan(&c.ID, &c.AccountID, &c.BID, &c.SoopNick, &c.Status, &c.Note, &c.RequestedAt, &c.DecidedAt)
+	if err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
 
 // ApprovedBIDs는 승인된 모든 SOOP 아이디를 돌려준다. 기동 시 수집기를 띄우는 데 쓴다.
-func ApprovedBIDs(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+func ApprovedBIDs(ctx context.Context, pool *store.DB) ([]string, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT bid FROM streamer_claims WHERE status = 'approved' ORDER BY bid`)
 	if err != nil {
@@ -188,7 +188,7 @@ func ApprovedBIDs(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	return out, rows.Err()
 }
 
-func scanClaims(rows pgx.Rows) ([]Claim, error) {
+func scanClaims(rows *sql.Rows) ([]Claim, error) {
 	var out []Claim
 	for rows.Next() {
 		var c Claim

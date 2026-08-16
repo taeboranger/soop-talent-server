@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // LogEntry는 달란트 증감 내역 한 줄이다.
@@ -30,7 +30,7 @@ type LogQuery struct {
 }
 
 // Log는 달란트 증감 내역을 최신순으로 돌려준다.
-func Log(ctx context.Context, pool *pgxpool.Pool, bid string, q LogQuery) ([]LogEntry, error) {
+func Log(ctx context.Context, pool *store.DB, bid string, q LogQuery) ([]LogEntry, error) {
 	limit := q.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -90,7 +90,7 @@ func FormatLogLine(e LogEntry) string {
 
 // Grant는 스트리머가 직접 달란트를 주거나 회수한다.
 // 사유는 반드시 남긴다 — 나중에 왜 줬는지 설명할 수 없으면 분쟁이 생긴다.
-func Grant(ctx context.Context, pool *pgxpool.Pool, bid, userID string, amount int, reason string) (*LogEntry, error) {
+func Grant(ctx context.Context, pool *store.DB, bid, userID string, amount int, reason string) (*LogEntry, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("대상 아이디를 입력해 주세요")
 	}
@@ -106,12 +106,18 @@ func Grant(ctx context.Context, pool *pgxpool.Pool, bid, userID string, amount i
 	// 같은 사람에게 같은 금액을 여러 번 줄 수 있어야 하므로 시각을 키에 넣는다.
 	idem := fmt.Sprintf("manual:%s:%d", userID, now.UnixNano())
 
-	var e LogEntry
-	err := pool.QueryRow(ctx, `
+	tag, err := pool.Exec(ctx, `
 		INSERT INTO point_events (bid, user_id, kind, amount, occurred_at, idem_key, reason)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		RETURNING id, user_id, kind, amount, COALESCE(reason,''), occurred_at`,
-		bid, userID, KindManual, amount, now, idem, reason).
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`, bid, userID, KindManual, amount, now, idem, reason)
+	if err != nil {
+		return nil, err
+	}
+	id, err := tag.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	var e LogEntry
+	err = pool.QueryRow(ctx, `SELECT id, user_id, kind, amount, COALESCE(reason,''), occurred_at FROM point_events WHERE id = $1`, id).
 		Scan(&e.ID, &e.UserID, &e.Kind, &e.Amount, &e.Reason, &e.OccurredAt)
 	if err != nil {
 		return nil, err
@@ -131,17 +137,18 @@ type Holder struct {
 }
 
 // Holders는 보유량 순으로 시청자를 돌려준다. 검색어로 좁힐 수 있다.
-func Holders(ctx context.Context, pool *pgxpool.Pool, bid, search string, limit int) ([]Holder, error) {
+func Holders(ctx context.Context, pool *store.DB, bid, search string, limit int) ([]Holder, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := pool.Query(ctx, `
-		SELECT p.user_id, COALESCE(u.nickname,''), p.total::int
-		  FROM user_points p
-		  LEFT JOIN users u ON u.bid = p.bid AND u.user_id = p.user_id
-		 WHERE p.bid = $1
-		   AND ($2 = '' OR p.user_id ILIKE '%'||$2||'%' OR u.nickname ILIKE '%'||$2||'%')
-		 ORDER BY p.total DESC
+		SELECT e.user_id, COALESCE(u.nickname,''), SUM(e.amount) AS total
+		  FROM point_events e
+		  LEFT JOIN users u ON u.bid = e.bid AND u.user_id = e.user_id
+		 WHERE e.bid = $1
+		   AND ($2 = '' OR LOWER(e.user_id) LIKE CONCAT('%',LOWER($2),'%') OR LOWER(u.nickname) LIKE CONCAT('%',LOWER($2),'%'))
+		 GROUP BY e.user_id, u.nickname
+		 ORDER BY total DESC
 		 LIMIT $3`, bid, search, limit)
 	if err != nil {
 		return nil, err

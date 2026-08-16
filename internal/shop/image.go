@@ -3,12 +3,12 @@ package shop
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sooptalent/server/internal/apperr"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // MaxImageBytes는 보상 미리보기 한 장의 상한이다.
@@ -58,17 +58,20 @@ func SniffImage(b []byte) (string, error) {
 }
 
 // SaveImage는 미리보기를 저장하고 식별자를 돌려준다.
-func SaveImage(ctx context.Context, pool *pgxpool.Pool, bid string, data []byte) (*Image, error) {
+func SaveImage(ctx context.Context, pool *store.DB, bid string, data []byte) (*Image, error) {
 	mime, err := SniffImage(data)
 	if err != nil {
 		return nil, err
 	}
-	var id int64
-	if err := pool.QueryRow(ctx, `
+	tag, err := pool.Exec(ctx, `
 		INSERT INTO shop_images (bid, mime, bytes, byte_size)
-		VALUES ($1, $2, $3, $4) RETURNING id`,
-		bid, mime, data, len(data)).Scan(&id); err != nil {
+		VALUES ($1, $2, $3, $4)`, bid, mime, data, len(data))
+	if err != nil {
 		return nil, fmt.Errorf("이미지 저장: %w", err)
+	}
+	id, err := tag.LastInsertId()
+	if err != nil {
+		return nil, err
 	}
 	return &Image{ID: id, Mime: mime, Data: data}, nil
 }
@@ -76,12 +79,12 @@ func SaveImage(ctx context.Context, pool *pgxpool.Pool, bid string, data []byte)
 // GetImage는 저장된 미리보기를 읽는다.
 // 시청자 확장도 봐야 하므로 소유자로 좁히지 않는다 —
 // 열린 보상 페이지의 이미지는 어차피 공개 정보다.
-func GetImage(ctx context.Context, pool *pgxpool.Pool, id int64) (*Image, error) {
+func GetImage(ctx context.Context, pool *store.DB, id int64) (*Image, error) {
 	var img Image
 	img.ID = id
 	err := pool.QueryRow(ctx,
 		`SELECT mime, bytes FROM shop_images WHERE id = $1`, id).Scan(&img.Mime, &img.Data)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return &img, err
@@ -89,10 +92,13 @@ func GetImage(ctx context.Context, pool *pgxpool.Pool, id int64) (*Image, error)
 
 // PurgeOrphanImages는 어떤 보상도 참조하지 않는 이미지를 지운다.
 // 편집 중 올렸다가 저장하지 않은 이미지가 쌓이는 것을 막는다.
-func PurgeOrphanImages(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
+func PurgeOrphanImages(ctx context.Context, pool *store.DB) (int64, error) {
 	tag, err := pool.Exec(ctx, `
-		DELETE FROM shop_images i
-		 WHERE i.created_at < now() - interval '1 day'
+		DELETE i FROM shop_images i
+		 WHERE i.created_at < DATE_SUB(NOW(6), INTERVAL 1 DAY)
 		   AND NOT EXISTS (SELECT 1 FROM shop_items s WHERE s.image_id = i.id)`)
-	return tag.RowsAffected(), err
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected()
 }

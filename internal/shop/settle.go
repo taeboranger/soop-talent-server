@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sooptalent/server/internal/scoring"
 	"github.com/sooptalent/server/internal/soop"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // Order는 정산 결과 한 건이다.
@@ -53,7 +53,7 @@ type CommentSource interface {
 //   - **댓글 시각 순으로 선착순** 처리한다. 잔액이 모자라면 뒤에 온 신청이 거절된다.
 //   - 확장이 보낸 값은 쓰지 않는다. SOOP 댓글이 유일한 근거다.
 //   - comment_no가 멱등키이므로 정산을 여러 번 돌려도 두 번 차감되지 않는다.
-func Settle(ctx context.Context, pool *pgxpool.Pool, api CommentSource, page *Page) (*SettleResult, error) {
+func Settle(ctx context.Context, pool *store.DB, api CommentSource, page *Page) (*SettleResult, error) {
 	if page.PostTitleNo == nil {
 		return nil, ErrBadPostURL
 	}
@@ -243,7 +243,7 @@ func Settle(ctx context.Context, pool *pgxpool.Pool, api CommentSource, page *Pa
 
 // saveOrder는 주문과 차감을 한 트랜잭션으로 기록한다.
 // 차감이 성공했는데 주문 기록이 없거나, 그 반대가 되면 안 된다.
-func saveOrder(ctx context.Context, pool *pgxpool.Pool, page *Page, o Order,
+func saveOrder(ctx context.Context, pool *store.DB, page *Page, o Order,
 	resolved []struct {
 		item Item
 		qty  int
@@ -255,19 +255,24 @@ func saveOrder(ctx context.Context, pool *pgxpool.Pool, page *Page, o Order,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var orderID int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO purchase_orders
+	tag, err := tx.Exec(ctx, `
+		INSERT IGNORE INTO purchase_orders
 		       (page_id, bid, user_id, nickname, comment_no, raw_comment,
 		        total_price, status, reject_reason, commented_at)
 		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,NULLIF($9,''),$10)
-		ON CONFLICT (page_id, comment_no) DO NOTHING
-		RETURNING id`,
+		`,
 		page.ID, page.BID, o.UserID, o.Nickname, o.CommentNo, o.RawComment,
-		o.TotalPrice, o.Status, o.RejectReason, o.CommentedAt).Scan(&orderID)
+		o.TotalPrice, o.Status, o.RejectReason, o.CommentedAt)
 	if err != nil {
-		// 이미 정산된 댓글이면 조용히 넘어간다 (멱등).
-		return nil
+		return err
+	}
+	n, _ := tag.RowsAffected()
+	if n == 0 {
+		return tx.Commit(ctx)
+	}
+	orderID, err := tag.LastInsertId()
+	if err != nil {
+		return err
 	}
 
 	if o.Status == "fulfilled" {
@@ -292,7 +297,7 @@ func saveOrder(ctx context.Context, pool *pgxpool.Pool, page *Page, o Order,
 				INSERT INTO point_events
 				       (bid, user_id, kind, amount, occurred_at, idem_key, meta, reason)
 				VALUES ($1,$2,$3,$4,now(),$5,$6,$7)
-				ON CONFLICT (bid, idem_key) DO NOTHING`,
+				ON DUPLICATE KEY UPDATE idem_key = idem_key`,
 				page.BID, o.UserID, scoring.KindPurchase, -o.TotalPrice,
 				fmt.Sprintf("purchase:%d:%d", page.ID, o.CommentNo),
 				fmt.Sprintf(`{"pageId":%d,"commentNo":%d}`, page.ID, o.CommentNo),
@@ -312,9 +317,9 @@ type itemUser struct {
 
 // priorConsumption은 이미 확정된 주문에서 나간 수량을 보상·사람별로 모은다.
 // 정산을 다시 돌려도 총 수량과 인당 제한이 되살아나지 않게 하는 근거다.
-func priorConsumption(ctx context.Context, pool *pgxpool.Pool, pageID int64) (map[itemUser]int, error) {
+func priorConsumption(ctx context.Context, pool *store.DB, pageID int64) (map[itemUser]int, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT l.item_id, o.user_id, SUM(l.quantity)::int
+		SELECT l.item_id, o.user_id, SUM(l.quantity)
 		  FROM purchase_lines l JOIN purchase_orders o ON o.id = l.order_id
 		 WHERE o.page_id = $1 AND o.status = 'fulfilled' AND l.item_id IS NOT NULL
 		 GROUP BY l.item_id, o.user_id`, pageID)
@@ -335,7 +340,7 @@ func priorConsumption(ctx context.Context, pool *pgxpool.Pool, pageID int64) (ma
 	return out, rows.Err()
 }
 
-func settledComments(ctx context.Context, pool *pgxpool.Pool, pageID int64) (map[int64]bool, error) {
+func settledComments(ctx context.Context, pool *store.DB, pageID int64) (map[int64]bool, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT comment_no FROM purchase_orders WHERE page_id = $1`, pageID)
 	if err != nil {
@@ -356,14 +361,14 @@ func settledComments(ctx context.Context, pool *pgxpool.Pool, pageID int64) (map
 
 // Balance는 시청자가 그 스트리머에게 보유한 달란트다.
 // 달란트는 스트리머별로 따로 쌓이므로 bid로 반드시 좁힌다.
-func Balance(ctx context.Context, pool *pgxpool.Pool, bid, userID string) (int, error) {
+func Balance(ctx context.Context, pool *store.DB, bid, userID string) (int, error) {
 	return currentBalance(ctx, pool, bid, userID)
 }
 
-func currentBalance(ctx context.Context, pool *pgxpool.Pool, bid, userID string) (int, error) {
+func currentBalance(ctx context.Context, pool *store.DB, bid, userID string) (int, error) {
 	var n *int
 	err := pool.QueryRow(ctx,
-		`SELECT SUM(amount)::int FROM point_events WHERE bid = $1 AND user_id = $2`,
+		`SELECT SUM(amount) FROM point_events WHERE bid = $1 AND user_id = $2`,
 		bid, userID).Scan(&n)
 	if err != nil || n == nil {
 		return 0, err
@@ -372,12 +377,12 @@ func currentBalance(ctx context.Context, pool *pgxpool.Pool, bid, userID string)
 }
 
 // Orders는 한 페이지의 구매 내역이다. 스트리머가 조회한다.
-func Orders(ctx context.Context, pool *pgxpool.Pool, pageID int64) ([]Order, error) {
+func Orders(ctx context.Context, pool *store.DB, pageID int64) ([]Order, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, user_id, COALESCE(nickname,''), comment_no, raw_comment,
 		       total_price, status, COALESCE(reject_reason,''), commented_at
 		  FROM purchase_orders WHERE page_id = $1
-		 ORDER BY commented_at NULLS LAST, comment_no`, pageID)
+		 ORDER BY commented_at IS NULL, commented_at, comment_no`, pageID)
 	if err != nil {
 		return nil, err
 	}

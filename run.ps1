@@ -10,8 +10,7 @@
 param(
     [string]$Streamers = "",          # 승인 절차 없이 강제 수집 (개발용)
     [string]$Listen = ":8099",
-    [string]$AdminEmail = "admin@sooptalent.local",
-    [string]$AdminPassword = "admin-pw-12345",
+    [string]$AdminEmails = "admin@sooptalent.local",
     [switch]$Build,
     [switch]$Stop
 )
@@ -42,18 +41,26 @@ if ($Stop) {
 }
 
 # ── DB ─────────────────────────────────────────────────────────────────────
-$running = docker ps --filter "name=sooptalent-db" --format "{{.Names}}"
-if (-not $running) {
-    Write-Host "PostgreSQL 시작 중..." -ForegroundColor Cyan
+$dbID = docker compose ps -q db
+if (-not $dbID) {
+    Write-Host "MySQL 시작 중..." -ForegroundColor Cyan
     docker compose up -d db
+    if (-not $?) { Write-Host "MySQL을 시작하지 못했습니다. Docker Desktop 상태를 확인하세요." -ForegroundColor Red; exit 1 }
+    $dbID = docker compose ps -q db
+}
+if (-not $dbID) {
+    Write-Host "MySQL 컨테이너를 찾지 못했습니다." -ForegroundColor Red
+    exit 1
+}
+if ($dbID) {
     foreach ($i in 1..40) {
         Start-Sleep -Seconds 2
-        $s = docker inspect --format='{{.State.Health.Status}}' sooptalent-db-1 2>$null
+        $s = docker inspect --format='{{.State.Health.Status}}' $dbID 2>$null
         if ($s -eq 'healthy') { break }
         if ($i -eq 40) { Write-Host "DB가 준비되지 않았습니다." -ForegroundColor Red; exit 1 }
     }
 }
-Write-Host "DB 준비됨 (localhost:5433)" -ForegroundColor Green
+Write-Host "DB 준비됨 (localhost:3307)" -ForegroundColor Green
 
 # ── 빌드 ───────────────────────────────────────────────────────────────────
 if ($Build -or -not (Test-Path "bin\sooptalent.exe")) {
@@ -73,19 +80,18 @@ if ($Build -or -not (Test-Path "bin\sooptalent.exe")) {
 }
 
 # ── 실행 ───────────────────────────────────────────────────────────────────
-$env:DATABASE_URL   = "postgres://sooptalent:sooptalent@localhost:5433/sooptalent"
+$env:DATABASE_URL   = "sooptalent:sooptalent@tcp(localhost:3307)/soop-talent?parseTime=true&charset=utf8mb4&loc=Asia%2FSeoul"
 $env:LISTEN         = $Listen
 $env:PUBLIC_URL     = "http://localhost$Listen"
 $env:MIGRATIONS     = "./migrations"
 $env:LOG_LEVEL      = "info"
-$env:ADMIN_EMAIL    = $AdminEmail
-$env:ADMIN_PASSWORD = $AdminPassword
+$env:ADMIN_EMAILS   = $AdminEmails
 $env:STREAMERS      = $Streamers
 
 Write-Host ""
 Write-Host "서버 주소:   http://localhost$Listen" -ForegroundColor Cyan
 Write-Host "관리자 화면: http://localhost$Listen/admin" -ForegroundColor Cyan
-Write-Host "관리자 계정: $AdminEmail" -ForegroundColor DarkGray
+Write-Host "관리자 이메일: $AdminEmails" -ForegroundColor DarkGray
 if ($Streamers) { Write-Host "강제 수집:   $Streamers (개발용)" -ForegroundColor Yellow }
 Write-Host "중지하려면 Ctrl+C" -ForegroundColor DarkGray
 Write-Host ""

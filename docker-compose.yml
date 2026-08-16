@@ -1,19 +1,36 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: mysql:8.4
     environment:
-      POSTGRES_USER: sooptalent
-      POSTGRES_PASSWORD: sooptalent
-      POSTGRES_DB: sooptalent
+      MYSQL_USER: sooptalent
+      MYSQL_PASSWORD: sooptalent
+      MYSQL_DATABASE: soop-talent
+      MYSQL_ROOT_PASSWORD: local-root-password-change-me
     ports:
-      - "5433:5432"          # 로컬 Postgres와 충돌하지 않도록 5433 사용
+      - "3307:3306"          # 로컬 MySQL과 충돌하지 않도록 3307 사용
     volumes:
-      - dbdata:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sooptalent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u sooptalent -psooptalent"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # 개발/검증용. 운영과 마찬가지로 서버 이미지 안의 migrate 실행 파일을 쓴다.
+  # 기본 docker compose up에는 뜨지 않으며, 아래처럼 한 번만 실행한다.
+  # docker compose --profile tools run --rm migrate
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      target: app
+    entrypoint: ["/app/sooptalent-migrate"]
+    environment:
+      DATABASE_URL: sooptalent:sooptalent@tcp(db:3306)/soop-talent?parseTime=true&charset=utf8mb4&loc=Asia%2FSeoul
+      MIGRATIONS: /app/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
-  dbdata:
+  mysql_data:

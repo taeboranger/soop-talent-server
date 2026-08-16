@@ -3,31 +3,32 @@ package shop
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sooptalent/server/internal/soop"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // 정산은 달란트가 실제로 깎이는 지점이다. DB를 붙여 끝까지 확인한다.
 //
-//	TEST_DATABASE_URL=postgres://... go test ./internal/shop/
+//	TEST_DATABASE_URL=user:pass@tcp(mysql:3306)/soop-talent?parseTime=true go test ./internal/shop/
 //
 // 설정되지 않으면 건너뛴다.
-func testPool(t *testing.T) *pgxpool.Pool {
+func testPool(t *testing.T) *store.DB {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL 미설정 — DB 테스트를 건너뜁니다")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	st, err := store.Open(context.Background(), dsn, slog.Default())
 	if err != nil {
 		t.Fatalf("DB 접속: %v", err)
 	}
-	t.Cleanup(pool.Close)
-	return pool
+	t.Cleanup(st.Close)
+	return st.Pool
 }
 
 // fakeComments는 SOOP 대신 미리 준비한 댓글을 돌려준다.
@@ -45,7 +46,7 @@ func comment(no int64, user, text string, min int) soop.Comment {
 }
 
 // setupPage는 격리된 스트리머와 열린 페이지를 만든다.
-func setupPage(t *testing.T, pool *pgxpool.Pool, items []Item) (*Page, string) {
+func setupPage(t *testing.T, pool *store.DB, items []Item) (*Page, string) {
 	t.Helper()
 	ctx := context.Background()
 	bid := fmt.Sprintf("test_%d", time.Now().UnixNano())
@@ -77,7 +78,7 @@ func setupPage(t *testing.T, pool *pgxpool.Pool, items []Item) (*Page, string) {
 	return p, bid
 }
 
-func give(t *testing.T, pool *pgxpool.Pool, bid, user string, amount int) {
+func give(t *testing.T, pool *store.DB, bid, user string, amount int) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO point_events (bid, user_id, kind, amount, occurred_at, idem_key, reason)
@@ -88,7 +89,7 @@ func give(t *testing.T, pool *pgxpool.Pool, bid, user string, amount int) {
 	}
 }
 
-func balanceOf(t *testing.T, pool *pgxpool.Pool, bid, user string) int {
+func balanceOf(t *testing.T, pool *store.DB, bid, user string) int {
 	t.Helper()
 	n, err := Balance(context.Background(), pool, bid, user)
 	if err != nil {

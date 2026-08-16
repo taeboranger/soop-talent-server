@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -17,11 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
 
 	"github.com/sooptalent/server/internal/apperr"
+	"github.com/sooptalent/server/internal/store"
 )
 
 var (
@@ -109,7 +109,7 @@ func NormalizeEmail(s string) string { return strings.ToLower(strings.TrimSpace(
 // 실제 도달 가능 여부는 어차피 메일을 보내 봐야 알 수 있다.
 var emailRe = regexp.MustCompile(`^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$`)
 
-func Register(ctx context.Context, pool *pgxpool.Pool, email, pw string, isAdmin bool) (*Account, error) {
+func Register(ctx context.Context, pool *store.DB, email, pw string, isAdmin bool) (*Account, error) {
 	email = NormalizeEmail(email)
 	if !emailRe.MatchString(email) {
 		return nil, apperr.New("올바른 이메일을 입력해 주세요")
@@ -119,15 +119,22 @@ func Register(ctx context.Context, pool *pgxpool.Pool, email, pw string, isAdmin
 		return nil, err
 	}
 
-	var a Account
-	err = pool.QueryRow(ctx, `
+	tag, err := pool.Exec(ctx, `
 		INSERT INTO accounts (email, password_hash, is_admin)
-		VALUES ($1, $2, $3)
-		RETURNING id, email, is_admin`, email, hash, isAdmin).Scan(&a.ID, &a.Email, &a.IsAdmin)
+		VALUES ($1, $2, $3)`, email, hash, isAdmin)
 	if err != nil {
-		if strings.Contains(err.Error(), "accounts_email_uniq") {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return nil, ErrEmailTaken
 		}
+		return nil, err
+	}
+	id, err := tag.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	var a Account
+	err = pool.QueryRow(ctx, `SELECT id, email, is_admin FROM accounts WHERE id = $1`, id).Scan(&a.ID, &a.Email, &a.IsAdmin)
+	if err != nil {
 		return nil, err
 	}
 	return &a, nil
@@ -135,7 +142,7 @@ func Register(ctx context.Context, pool *pgxpool.Pool, email, pw string, isAdmin
 
 // Login은 자격 증명을 확인하고 세션 토큰을 발급한다.
 // 이메일이 없든 비밀번호가 틀리든 같은 오류를 돌려준다 — 가입 여부가 새지 않게.
-func Login(ctx context.Context, pool *pgxpool.Pool, email, pw, userAgent string) (string, *Account, error) {
+func Login(ctx context.Context, pool *store.DB, email, pw, userAgent string) (string, *Account, error) {
 	var (
 		a        Account
 		hash     string
@@ -146,7 +153,7 @@ func Login(ctx context.Context, pool *pgxpool.Pool, email, pw, userAgent string)
 		  FROM accounts WHERE lower(email) = $1`, NormalizeEmail(email)).
 		Scan(&a.ID, &a.Email, &hash, &a.IsAdmin, &disabled)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		// 존재하지 않는 계정도 해시 비용을 치르게 해 응답 시간으로 구분되지 않게 한다.
 		VerifyPassword("$argon2id$v=19$m=65536,t=2,p=4$"+
 			strings.Repeat("A", 22)+"$"+strings.Repeat("A", 43), pw)
@@ -179,7 +186,7 @@ func hashToken(t string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func issueSession(ctx context.Context, pool *pgxpool.Pool, accountID int64, ua string) (string, error) {
+func issueSession(ctx context.Context, pool *store.DB, accountID int64, ua string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -190,8 +197,8 @@ func issueSession(ctx context.Context, pool *pgxpool.Pool, accountID int64, ua s
 	}
 	_, err := pool.Exec(ctx, `
 		INSERT INTO sessions (token_hash, account_id, expires_at, user_agent)
-		VALUES ($1, $2, now() + $3::interval, $4)`,
-		hashToken(token), accountID, SessionTTL.String(), ua)
+		VALUES ($1, $2, DATE_ADD(NOW(6), INTERVAL $3 SECOND), $4)`,
+		hashToken(token), accountID, int(SessionTTL.Seconds()), ua)
 	if err != nil {
 		return "", err
 	}
@@ -200,7 +207,7 @@ func issueSession(ctx context.Context, pool *pgxpool.Pool, accountID int64, ua s
 
 // Resolve는 세션 토큰에서 계정을 얻는다. 만료된 세션은 통과하지 않는다.
 // 수명이 절반 아래로 떨어지면 자동 연장해, 활발히 쓰는 확장이 갑자기 로그아웃되지 않게 한다.
-func Resolve(ctx context.Context, pool *pgxpool.Pool, token string) (*Account, error) {
+func Resolve(ctx context.Context, pool *store.DB, token string) (*Account, error) {
 	if token == "" {
 		return nil, ErrNoSession
 	}
@@ -215,7 +222,7 @@ func Resolve(ctx context.Context, pool *pgxpool.Pool, token string) (*Account, e
 		 WHERE s.token_hash = $1 AND s.expires_at > now()`, hashToken(token)).
 		Scan(&a.ID, &a.Email, &a.IsAdmin, &disabled, &expires)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSession
 	}
 	if err != nil {
@@ -227,8 +234,8 @@ func Resolve(ctx context.Context, pool *pgxpool.Pool, token string) (*Account, e
 
 	if time.Until(expires) < sessionRenewAt {
 		_, _ = pool.Exec(ctx, `
-			UPDATE sessions SET expires_at = now() + $2::interval, last_used_at = now()
-			 WHERE token_hash = $1`, hashToken(token), SessionTTL.String())
+			UPDATE sessions SET expires_at = DATE_ADD(NOW(6), INTERVAL $2 SECOND), last_used_at = NOW(6)
+			 WHERE token_hash = $1`, hashToken(token), int(SessionTTL.Seconds()))
 	} else {
 		_, _ = pool.Exec(ctx, `UPDATE sessions SET last_used_at = now() WHERE token_hash = $1`,
 			hashToken(token))
@@ -238,30 +245,33 @@ func Resolve(ctx context.Context, pool *pgxpool.Pool, token string) (*Account, e
 
 // SessionExpiry는 지금 세션이 언제 끊기는지 알려 준다.
 // 상태 화면에 "남은 기간"을 보여 주는 용도이며, 권한 판단에는 쓰지 않는다.
-func SessionExpiry(ctx context.Context, pool *pgxpool.Pool, token string) (time.Time, error) {
+func SessionExpiry(ctx context.Context, pool *store.DB, token string) (time.Time, error) {
 	var t time.Time
 	err := pool.QueryRow(ctx,
 		`SELECT expires_at FROM sessions WHERE token_hash = $1`, hashToken(token)).Scan(&t)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, ErrNoSession
 	}
 	return t, err
 }
 
-func Logout(ctx context.Context, pool *pgxpool.Pool, token string) error {
+func Logout(ctx context.Context, pool *store.DB, token string) error {
 	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, hashToken(token))
 	return err
 }
 
 // PurgeExpired는 만료 세션을 정리한다. 주기적으로 호출한다.
-func PurgeExpired(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
+func PurgeExpired(ctx context.Context, pool *store.DB) (int64, error) {
 	tag, err := pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
-	return tag.RowsAffected(), err
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected()
 }
 
 // EnsureAdmin은 최초 기동 시 관리자 계정을 만든다.
 // 이미 있으면 아무것도 하지 않는다 — 비밀번호를 덮어쓰지 않는다.
-func EnsureAdmin(ctx context.Context, pool *pgxpool.Pool, email, pw string) (created bool, err error) {
+func EnsureAdmin(ctx context.Context, pool *store.DB, email, pw string) (created bool, err error) {
 	email = NormalizeEmail(email)
 	var exists bool
 	if err = pool.QueryRow(ctx,

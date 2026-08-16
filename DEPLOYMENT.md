@@ -8,7 +8,7 @@
 ```text
 sooptalent-server main 푸시
   → GitHub Actions: 테스트 · Docker Hub 이미지 빌드
-  → config 저장소의 SoopTalent 이미지 SHA 갱신
+  → GitOps 설정 저장소의 이미지 SHA 갱신
   → Argo CD: Vault 시크릿 동기화 → initContainer DB 마이그레이션 → 앱 기동
 ```
 
@@ -19,7 +19,7 @@ sooptalent-server main 푸시
 | 용도 | 로컬 경로 | GitHub에서 할 일 |
 |---|---|---|
 | 애플리케이션 | `SoopTalent/sooptalent-server` | `main` 브랜치에 푸시 |
-| GitOps 설정 | `config` | `SoopTalent/` 폴더를 커밋·푸시 |
+| GitOps 설정 | `config/SoopTalent` | 저장소 루트의 내용을 커밋·푸시 |
 
 기본 Docker Hub 이미지 이름은 다음 하나로 맞춰져 있습니다.
 
@@ -33,13 +33,13 @@ lightstone1/soop-talent-server
 다른 Docker Hub 계정을 쓸 경우 아래 두 곳의 `lightstone1`을 **같은 값으로** 바꾸세요.
 
 - `sooptalent-server/.github/workflows/container-image.yml`
-- `config/SoopTalent/overlays/prod/sooptalent/kustomization.yaml`
+- GitOps 저장소의 `overlays/prod/sooptalent/kustomization.yaml`
 
 ## 2. DNS와 TLS
 
 1. Kubernetes Ingress 컨트롤러의 외부 IP 또는 호스트를 확인합니다.
 2. DNS 관리 화면에서 `soop-talent.cagea1.com`의 `A` 레코드(또는 환경에 맞는 CNAME)를 Ingress로 연결합니다.
-3. `config/SoopTalent`를 Argo CD가 동기화하면 cert-manager가 Let's Encrypt 인증서를 발급합니다.
+3. GitOps 저장소를 Argo CD가 동기화하면 cert-manager가 Let's Encrypt 인증서를 발급합니다.
 
 인증서가 발급되려면 DNS가 먼저 연결되어 있어야 합니다. 인증서와 Ingress 이름은 모두
 `sooptalent-tls`, `sooptalent-ingress`로 고정돼 있습니다.
@@ -118,14 +118,14 @@ GitOps 저장소의 Contents 권한만 Read and write로 제한하세요.
 
 ## 6. Argo CD Application 등록
 
-이미 config 저장소를 감시하는 ApplicationSet이 있다면, 그 규칙에 `SoopTalent/overlays/prod`가
+이미 config 저장소를 감시하는 ApplicationSet이 있다면, 그 규칙에 `overlays/prod`가
 포함되는지만 확인하면 됩니다. 별도 Application을 만들 경우 아래 값을 사용합니다.
 
 | 항목 | 값 |
 |---|---|
 | Application 이름 | `sooptalent` |
 | Repo URL | config GitHub 저장소 URL |
-| Path | `SoopTalent/overlays/prod` |
+| Path | `overlays/prod` |
 | Destination namespace | `sooptalent-prod` |
 | Sync policy | Automated (prune + self-heal 권장) |
 
@@ -134,7 +134,7 @@ Argo CD CLI 예시입니다. `<CONFIG_REPO_URL>`만 실제 주소로 바꾸세�
 ```bash
 argocd app create sooptalent \
   --repo <CONFIG_REPO_URL> \
-  --path SoopTalent/overlays/prod \
+  --path overlays/prod \
   --dest-server https://kubernetes.default.svc \
   --dest-namespace sooptalent-prod \
   --sync-policy automated \
@@ -147,7 +147,7 @@ argocd app create sooptalent \
 
 ## 7. 첫 배포 순서
 
-1. `config/SoopTalent` 변경을 config 저장소에 커밋·푸시합니다.
+1. config 저장소 루트의 변경을 커밋·푸시합니다.
 2. DNS 레코드를 만듭니다.
 3. Vault에 `soop-talent-server-prod-secret`을 등록합니다.
 4. Argo CD Application을 생성하고 첫 Sync를 완료합니다.
@@ -189,7 +189,7 @@ https://soop-talent.cagea1.com/admin        → 관리자 로그인 화면
 ## 10. 롤백
 
 문제가 생기면 config 저장소의
-`SoopTalent/overlays/prod/sooptalent/kustomization.yaml`에서 앱 이미지 태그를
+`overlays/prod/sooptalent/kustomization.yaml`에서 앱 이미지 태그를
 직전 SHA로 되돌려 커밋합니다. Argo CD가 이전 버전으로 동기화합니다.
 
 DB 마이그레이션은 되돌릴 수 없는 변경이 있을 수 있으므로, 운영 배포 전 MySQL 백업은 별도로 유지하세요.

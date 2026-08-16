@@ -12,6 +12,7 @@ package shop
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -19,10 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/sooptalent/server/internal/apperr"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // 구매 신청 댓글 형식:
@@ -33,14 +32,14 @@ import (
 const OrderPrefix = "[구매신청]"
 
 var (
-	ErrNotFound     = apperr.New("보상 페이지를 찾을 수 없습니다")
-	ErrAlreadyOpen  = apperr.New("이미 열려 있는 보상 페이지가 있습니다. 먼저 닫아 주세요")
-	ErrNotDraft     = apperr.New("작성 중인 페이지만 열 수 있습니다")
-	ErrNotOpen      = apperr.New("열려 있는 페이지가 아닙니다")
-	ErrClosed       = apperr.New("이미 닫힌 페이지입니다. 다시 열 수 없습니다")
-	ErrNoItems      = apperr.New("보상을 하나 이상 등록해 주세요")
-	ErrBadPostURL   = apperr.New("방송국 게시글 주소가 올바르지 않습니다")
-	ErrPostOwner    = apperr.New("본인 방송국의 게시글만 등록할 수 있습니다")
+	ErrNotFound    = apperr.New("보상 페이지를 찾을 수 없습니다")
+	ErrAlreadyOpen = apperr.New("이미 열려 있는 보상 페이지가 있습니다. 먼저 닫아 주세요")
+	ErrNotDraft    = apperr.New("작성 중인 페이지만 열 수 있습니다")
+	ErrNotOpen     = apperr.New("열려 있는 페이지가 아닙니다")
+	ErrClosed      = apperr.New("이미 닫힌 페이지입니다. 다시 열 수 없습니다")
+	ErrNoItems     = apperr.New("보상을 하나 이상 등록해 주세요")
+	ErrBadPostURL  = apperr.New("방송국 게시글 주소가 올바르지 않습니다")
+	ErrPostOwner   = apperr.New("본인 방송국의 게시글만 등록할 수 있습니다")
 )
 
 type Status string
@@ -74,10 +73,10 @@ type Item struct {
 	// Stock은 이 페이지에서 풀리는 **총 수량**이다. nil이면 무제한.
 	// PerUserLimit은 **한 사람이** 가져갈 수 있는 최대 개수다. nil이면 무제한.
 	// 둘 다 걸면 더 빡빡한 쪽이 먼저 걸린다.
-	Stock        *int   `json:"stock,omitempty"`
-	PerUserLimit *int   `json:"perUserLimit,omitempty"`
-	Price        int    `json:"price"`
-	SortOrder    int    `json:"sortOrder"`
+	Stock        *int `json:"stock,omitempty"`
+	PerUserLimit *int `json:"perUserLimit,omitempty"`
+	Price        int  `json:"price"`
+	SortOrder    int  `json:"sortOrder"`
 	// 미리보기 이미지. 없으면 nil.
 	ImageID *int64 `json:"imageId,omitempty"`
 }
@@ -86,7 +85,7 @@ type Item struct {
 // 페이지 관리
 // ---------------------------------------------------------------------------
 
-func List(ctx context.Context, pool *pgxpool.Pool, bid string) ([]Page, error) {
+func List(ctx context.Context, pool *store.DB, bid string) ([]Page, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
 		       post_title_no, opened_at, closed_at, settled_at, created_at
@@ -121,7 +120,7 @@ func List(ctx context.Context, pool *pgxpool.Pool, bid string) ([]Page, error) {
 	return out, nil
 }
 
-func Get(ctx context.Context, pool *pgxpool.Pool, bid string, id int64) (*Page, error) {
+func Get(ctx context.Context, pool *store.DB, bid string, id int64) (*Page, error) {
 	var p Page
 	err := pool.QueryRow(ctx, `
 		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
@@ -129,7 +128,7 @@ func Get(ctx context.Context, pool *pgxpool.Pool, bid string, id int64) (*Page, 
 		  FROM shop_pages WHERE id = $1 AND bid = $2`, id, bid).
 		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PostURL,
 			&p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -139,7 +138,7 @@ func Get(ctx context.Context, pool *pgxpool.Pool, bid string, id int64) (*Page, 
 	return &p, err
 }
 
-func Items(ctx context.Context, pool *pgxpool.Pool, pageID int64) ([]Item, error) {
+func Items(ctx context.Context, pool *store.DB, pageID int64) ([]Item, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, name, price, stock, per_user_limit, sort_order, image_id
 		  FROM shop_items WHERE page_id = $1 ORDER BY sort_order, id`, pageID)
@@ -160,25 +159,25 @@ func Items(ctx context.Context, pool *pgxpool.Pool, pageID int64) ([]Item, error
 	return out, rows.Err()
 }
 
-func Create(ctx context.Context, pool *pgxpool.Pool, bid, title, desc string) (*Page, error) {
+func Create(ctx context.Context, pool *store.DB, bid, title, desc string) (*Page, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, apperr.New("페이지 이름을 입력해 주세요")
 	}
-	var p Page
-	err := pool.QueryRow(ctx, `
-		INSERT INTO shop_pages (bid, title, description) VALUES ($1, $2, NULLIF($3,''))
-		RETURNING id, bid, title, COALESCE(description,''), status, '', NULL::bigint,
-		          NULL::timestamptz, NULL::timestamptz, NULL::timestamptz, created_at`,
-		bid, title, desc).
-		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PostURL,
-			&p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt, &p.CreatedAt)
-	return &p, err
+	tag, err := pool.Exec(ctx, `INSERT INTO shop_pages (bid, title, description) VALUES ($1, $2, NULLIF($3,''))`, bid, title, desc)
+	if err != nil {
+		return nil, err
+	}
+	id, err := tag.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return Get(ctx, pool, bid, id)
 }
 
 // SetItems는 보상 목록을 통째로 교체한다.
 // 열린 페이지는 상품을 바꿀 수 없다 — 시청자가 본 목록과 정산 기준이 달라지면 안 된다.
-func SetItems(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64, items []Item) error {
+func SetItems(ctx context.Context, pool *store.DB, bid string, pageID int64, items []Item) error {
 	p, err := Get(ctx, pool, bid, pageID)
 	if err != nil {
 		return err
@@ -238,13 +237,14 @@ func SetItems(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64,
 	return tx.Commit(ctx)
 }
 
-func Delete(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64) error {
+func Delete(ctx context.Context, pool *store.DB, bid string, pageID int64) error {
 	tag, err := pool.Exec(ctx,
 		`DELETE FROM shop_pages WHERE id = $1 AND bid = $2 AND status = 'draft'`, pageID, bid)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, _ := tag.RowsAffected()
+	if n == 0 {
 		return apperr.New("작성 중인 페이지만 삭제할 수 있습니다")
 	}
 	return nil
@@ -269,7 +269,7 @@ func ParsePostURL(raw string) (bid string, titleNo int64, err error) {
 
 // Open은 게시글을 연결하고 페이지를 연다.
 // 게시글의 소유자와 제목은 호출자가 SOOP API로 확인해 넘긴다.
-func Open(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64, postURL string, titleNo int64) (*Page, error) {
+func Open(ctx context.Context, pool *store.DB, bid string, pageID int64, postURL string, titleNo int64) (*Page, error) {
 	p, err := Get(ctx, pool, bid, pageID)
 	if err != nil {
 		return nil, err
@@ -302,7 +302,7 @@ func Open(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64, pos
 }
 
 // OpenPageByPost는 게시글 번호로 열려 있는 페이지를 찾는다. 시청자 확장이 쓴다.
-func OpenPageByPost(ctx context.Context, pool *pgxpool.Pool, titleNo int64) (*Page, error) {
+func OpenPageByPost(ctx context.Context, pool *store.DB, titleNo int64) (*Page, error) {
 	var p Page
 	err := pool.QueryRow(ctx, `
 		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
@@ -310,7 +310,7 @@ func OpenPageByPost(ctx context.Context, pool *pgxpool.Pool, titleNo int64) (*Pa
 		  FROM shop_pages WHERE post_title_no = $1 AND status = 'open'`, titleNo).
 		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PostURL,
 			&p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -328,7 +328,7 @@ func OpenPageByPost(ctx context.Context, pool *pgxpool.Pool, titleNo int64) (*Pa
 // 이 목록을 한 번 받아 캐시해 두면 이후 판단은 요청 없이 끝난다.
 //
 // 게시글 번호는 이미 공개된 정보라 인증 없이 준다. 보상 목록이나 잔액은 포함하지 않는다.
-func OpenPostNos(ctx context.Context, pool *pgxpool.Pool, bid string) ([]int64, error) {
+func OpenPostNos(ctx context.Context, pool *store.DB, bid string) ([]int64, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT post_title_no FROM shop_pages
 		 WHERE bid = $1 AND status = 'open' AND post_title_no IS NOT NULL`, bid)
@@ -349,14 +349,15 @@ func OpenPostNos(ctx context.Context, pool *pgxpool.Pool, bid string) ([]int64, 
 }
 
 // MarkClosed는 페이지를 닫는다. 정산은 호출자가 이어서 수행한다.
-func MarkClosed(ctx context.Context, pool *pgxpool.Pool, bid string, pageID int64) (*Page, error) {
+func MarkClosed(ctx context.Context, pool *store.DB, bid string, pageID int64) (*Page, error) {
 	tag, err := pool.Exec(ctx, `
 		UPDATE shop_pages SET status = 'closed', closed_at = now()
 		 WHERE id = $1 AND bid = $2 AND status = 'open'`, pageID, bid)
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
+	n, _ := tag.RowsAffected()
+	if n == 0 {
 		return nil, ErrNotOpen
 	}
 	return Get(ctx, pool, bid, pageID)

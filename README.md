@@ -99,7 +99,13 @@ DB 시작 → (필요하면) 빌드 → 서버 실행까지 한 번에 합니다
 docker compose up -d db
 ```
 
-PostgreSQL이 **5433** 포트로 뜹니다 (로컬 Postgres와 충돌하지 않도록).
+MySQL 8이 **3307** 포트로 뜹니다 (로컬 MySQL과 충돌하지 않도록).
+
+새 DB에 스키마가 정상 생성되는지 확인하려면 다음을 한 번 실행합니다.
+
+```powershell
+docker compose --profile tools run --rm migrate
+```
 
 ### 3. 빌드
 
@@ -110,15 +116,15 @@ go build -o bin/sooptalent.exe ./cmd/sooptalent
 ### 4. 실행
 
 ```powershell
-$env:DATABASE_URL   = "postgres://sooptalent:sooptalent@localhost:5433/sooptalent"
-$env:ADMIN_EMAIL    = "admin@example.com"
-$env:ADMIN_PASSWORD = "충분히-긴-비밀번호"
+$env:DATABASE_URL   = "sooptalent:sooptalent@tcp(localhost:3307)/soop-talent?parseTime=true&charset=utf8mb4&loc=Asia%2FSeoul"
+$env:ADMIN_EMAILS   = "admin@example.com"
 $env:LISTEN         = ":8099"
 $env:MIGRATIONS     = "./migrations"
 .\bin\sooptalent.exe
 ```
 
-마이그레이션은 실행할 때마다 자동 적용됩니다 (전부 `IF NOT EXISTS`라 반복 실행해도 안전).
+마이그레이션은 실행할 때마다 자동 적용됩니다. 적용 완료한 파일은 DB의
+`schema_migrations`에 기록하므로 다시 실행되지 않습니다.
 
 ---
 
@@ -126,18 +132,17 @@ $env:MIGRATIONS     = "./migrations"
 
 | 이름 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `DATABASE_URL` | ✅ | — | PostgreSQL DSN |
-| `ADMIN_EMAIL` | | — | 최초 관리자 계정 (최초 1회만 생성) |
-| `ADMIN_PASSWORD` | | — | 최초 관리자 비밀번호 (8자 이상) |
+| `DATABASE_URL` | ✅ | — | MySQL 8 DSN |
+| `ADMIN_EMAILS` | ✅ | — | 검증된 OAuth 이메일이 일치할 때 관리자 권한을 줄 목록 (쉼표 구분) |
 | `LISTEN` | | `:8080` | HTTP 바인드 주소 |
 | `PUBLIC_URL` | | `http://localhost{LISTEN}` | 소셜 로그인 콜백 주소를 만드는 데 쓰는 공개 주소 |
 | `MIGRATIONS` | | `./migrations` | 마이그레이션 디렉터리 |
 | `LOG_LEVEL` | | `info` | `debug` / `info` / `warn` / `error` |
 | `STREAMERS` | | — | 승인 절차 없이 강제 수집할 아이디. **개발용** |
 
-### 소셜 로그인 (선택)
+### OAuth 로그인
 
-설정하지 않으면 이메일·비밀번호만 사용됩니다. 설정된 제공자만 확장에 버튼이 표시됩니다.
+하나 이상의 제공자를 설정해야 사용자가 로그인할 수 있습니다. 설정된 제공자만 확장에 버튼이 표시됩니다.
 
 | 환경변수 | 제공자 콘솔에 등록할 Redirect URI |
 |---|---|
@@ -196,7 +201,7 @@ go vet ./...
 정산 테스트는 실제 DB를 씁니다. 설정하지 않으면 건너뜁니다.
 
 ```powershell
-$env:TEST_DATABASE_URL = "postgres://sooptalent:sooptalent@localhost:5433/sooptalent"
+$env:TEST_DATABASE_URL = "sooptalent:sooptalent@tcp(localhost:3307)/soop-talent?parseTime=true&charset=utf8mb4&loc=Asia%2FSeoul"
 go test ./internal/shop/
 ```
 
@@ -238,12 +243,13 @@ node tools/build-docs.mjs ../어딘가  # 다른 곳으로 뽑기
 ## DB 들여다보기
 
 ```powershell
-docker exec -it sooptalent-db-1 psql -U sooptalent -d sooptalent
+docker compose exec db mysql -u sooptalent -psooptalent soop-talent
 ```
 
 ```sql
 SELECT kind, COUNT(*), SUM(amount) FROM point_events GROUP BY kind;
-SELECT * FROM user_points ORDER BY total DESC LIMIT 20;
+SELECT user_id, SUM(amount) AS total
+FROM point_events GROUP BY user_id ORDER BY total DESC LIMIT 20;
 SELECT svc, COUNT(*) FROM raw_chat_events GROUP BY svc ORDER BY 2 DESC;
 ```
 

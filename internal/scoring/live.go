@@ -8,15 +8,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sooptalent/server/internal/soop"
+	"github.com/sooptalent/server/internal/store"
 )
 
 // Live는 실시간 채팅 이벤트를 달란트로 바꾼다.
 // 스트리머 한 명당 하나씩 두며, 내부 상태는 뮤텍스로 보호한다.
 type Live struct {
 	BID  string
-	Pool *pgxpool.Pool
+	Pool *store.DB
 	Log  *slog.Logger
 
 	mu    sync.Mutex
@@ -46,7 +46,7 @@ type minuteCount struct {
 	n      int
 }
 
-func NewLive(bid string, pool *pgxpool.Pool, log *slog.Logger, rules Rules) *Live {
+func NewLive(bid string, pool *store.DB, log *slog.Logger, rules Rules) *Live {
 	return &Live{
 		BID: bid, Pool: pool, Log: log.With("bid", bid), rules: rules,
 		seen:    make(map[string]*presence),

@@ -428,9 +428,14 @@ func (s *Server) handleAwardStatus(w http.ResponseWriter, r *http.Request) error
 		keys = append(keys, "board:"+id, "comment:"+id)
 	}
 
+	marks := strings.TrimRight(strings.Repeat("?,", len(keys)), ",")
+	args := make([]any, 0, len(keys)+1)
+	args = append(args, bidOf(r))
+	for _, k := range keys {
+		args = append(args, k)
+	}
 	rows, err := s.Store.Pool.Query(r.Context(),
-		`SELECT idem_key FROM point_events WHERE bid = $1 AND idem_key = ANY($2)`,
-		bidOf(r), keys)
+		fmt.Sprintf(`SELECT idem_key FROM point_events WHERE bid = ? AND idem_key IN (%s)`, marks), args...)
 	if err != nil {
 		return err
 	}

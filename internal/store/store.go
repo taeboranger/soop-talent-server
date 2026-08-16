@@ -2,52 +2,96 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/go-sql-driver/mysql"
 )
 
+// DB는 MySQL 전용의 작은 database/sql 어댑터다. 호출부는 명시적인 MySQL 문법을
+// 쓰고, 과거 코드의 $1 자리표시자만 여기서 ?로 변환한다.
+type DB struct{ *sql.DB }
+type Result struct{ sql.Result }
+type Tx struct{ *sql.Tx }
+
+var dollarArg = regexp.MustCompile(`\$[0-9]+`)
+
+func mysqlSQL(q string) string { return dollarArg.ReplaceAllString(q, "?") }
+func (d *DB) Exec(ctx context.Context, q string, args ...any) (Result, error) {
+	r, err := d.DB.ExecContext(ctx, mysqlSQL(q), args...)
+	return Result{r}, err
+}
+func (d *DB) Query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	return d.DB.QueryContext(ctx, mysqlSQL(q), args...)
+}
+func (d *DB) QueryRow(ctx context.Context, q string, args ...any) *sql.Row {
+	return d.DB.QueryRowContext(ctx, mysqlSQL(q), args...)
+}
+func (d *DB) Ping(ctx context.Context) error { return d.DB.PingContext(ctx) }
+func (d *DB) Begin(ctx context.Context) (*Tx, error) {
+	tx, err := d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Tx{tx}, nil
+}
+func (t *Tx) Exec(ctx context.Context, q string, args ...any) (Result, error) {
+	r, err := t.Tx.ExecContext(ctx, mysqlSQL(q), args...)
+	return Result{r}, err
+}
+func (t *Tx) QueryRow(ctx context.Context, q string, args ...any) *sql.Row {
+	return t.Tx.QueryRowContext(ctx, mysqlSQL(q), args...)
+}
+func (t *Tx) Commit(context.Context) error   { return t.Tx.Commit() }
+func (t *Tx) Rollback(context.Context) error { return t.Tx.Rollback() }
+
 type Store struct {
-	Pool *pgxpool.Pool
+	Pool *DB
 	Log  *slog.Logger
 }
 
 func Open(ctx context.Context, dsn string, log *slog.Logger) (*Store, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("DSN 파싱: %w", err)
+		return nil, fmt.Errorf("MySQL DSN 파싱: %w", err)
 	}
-	// 수집기 고루틴이 많아도 커넥션은 소수로 충분하다.
-	// 쓰기는 전부 배치로 모아 나가므로 동시 쿼리 수가 적다.
-	cfg.MaxConns = 12
-	cfg.MinConns = 2
-	cfg.MaxConnIdleTime = 5 * time.Minute
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	cfg.ParseTime = true
+	cfg.Loc = time.Local
+	cfg.MultiStatements = true
+	if cfg.Params == nil {
+		cfg.Params = map[string]string{}
+	}
+	cfg.Params["charset"] = "utf8mb4"
+	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		return nil, err
 	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+	db.SetMaxOpenConns(12)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("DB 접속 확인: %w", err)
 	}
-	return &Store{Pool: pool, Log: log}, nil
+	return &Store{Pool: &DB{db}, Log: log}, nil
 }
-
 func (s *Store) Close() { s.Pool.Close() }
 
-// Migrate는 migrations 디렉터리의 .sql 파일을 이름순으로 적용한다.
-// 모든 문장이 IF NOT EXISTS이므로 반복 실행해도 안전하다.
+// Migrate는 파일별 이력을 기록한다. MySQL의 ALTER는 재실행 안전하지 않으므로
+// PostgreSQL 시절의 IF NOT EXISTS 반복 실행 방식에 의존하지 않는다.
 func (s *Store) Migrate(ctx context.Context, dir string) error {
+	if _, err := s.Pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+        name VARCHAR(255) PRIMARY KEY, applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6))`); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("마이그레이션 디렉터리: %w", err)
@@ -59,85 +103,77 @@ func (s *Store) Migrate(ctx context.Context, dir string) error {
 		}
 	}
 	sort.Strings(files)
-
 	for _, f := range files {
+		var done int
+		err := s.Pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE name = $1`, f).Scan(&done)
+		if err == nil {
+			continue
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
 		b, err := os.ReadFile(filepath.Join(dir, f))
 		if err != nil {
 			return err
 		}
-		if _, err := s.Pool.Exec(ctx, string(b)); err != nil {
+		tx, err := s.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, string(b)); err == nil {
+			_, err = tx.Exec(ctx, `INSERT INTO schema_migrations (name) VALUES ($1)`, f)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("%s 적용: %w", f, err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return err
 		}
 		s.Log.Info("마이그레이션 적용", "file", f)
 	}
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// 스트리머 / 방송
-// ---------------------------------------------------------------------------
-
 func (s *Store) EnsureStreamer(ctx context.Context, bid, nick string) error {
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO streamers (bid, nickname) VALUES ($1, NULLIF($2,''))
-		ON CONFLICT (bid) DO UPDATE
-		   SET nickname = COALESCE(NULLIF(EXCLUDED.nickname,''), streamers.nickname)`,
-		bid, nick)
+	_, err := s.Pool.Exec(ctx, `INSERT INTO streamers (bid, nickname) VALUES ($1, NULLIF($2,''))
+        ON DUPLICATE KEY UPDATE nickname = COALESCE(NULLIF(VALUES(nickname),''), nickname)`, bid, nick)
 	return err
 }
-
-// ChatEnabled는 채팅 연동 스위치를 읽는다.
-// 아직 등록되지 않은 방송국은 켜진 것으로 본다 — 승인 직후의 기본값과 같다.
 func (s *Store) ChatEnabled(ctx context.Context, bid string) (bool, error) {
 	var on bool
-	err := s.Pool.QueryRow(ctx,
-		`SELECT chat_enabled FROM streamers WHERE bid = $1`, bid).Scan(&on)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.Pool.QueryRow(ctx, `SELECT chat_enabled FROM streamers WHERE bid = $1`, bid).Scan(&on)
+	if err == sql.ErrNoRows {
 		return true, nil
 	}
 	return on, err
 }
-
-// SetChatEnabled는 스위치를 저장한다. 서버를 다시 켜도 이 값이 유지된다.
 func (s *Store) SetChatEnabled(ctx context.Context, bid string, on bool) error {
-	tag, err := s.Pool.Exec(ctx,
-		`UPDATE streamers SET chat_enabled = $2 WHERE bid = $1`, bid, on)
+	tag, err := s.Pool.Exec(ctx, `UPDATE streamers SET chat_enabled = $2 WHERE bid = $1`, bid, on)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, _ := tag.RowsAffected()
+	if n == 0 {
 		return fmt.Errorf("등록되지 않은 방송국입니다: %s", bid)
 	}
 	return nil
 }
-
 func (s *Store) StartBroadcast(ctx context.Context, bid, broadNo, title string) error {
 	n, err := strconv.ParseInt(broadNo, 10, 64)
 	if err != nil {
-		return nil // 방송 번호가 없으면 기록할 것이 없다
+		return nil
 	}
-	_, err = s.Pool.Exec(ctx, `
-		INSERT INTO broadcasts (broad_no, bid, title) VALUES ($1, $2, $3)
-		ON CONFLICT (broad_no) DO UPDATE SET title = EXCLUDED.title`,
-		n, bid, title)
+	_, err = s.Pool.Exec(ctx, `INSERT INTO broadcasts (broad_no,bid,title) VALUES ($1,$2,$3) ON DUPLICATE KEY UPDATE title=VALUES(title)`, n, bid, title)
 	return err
 }
 
-// ---------------------------------------------------------------------------
-// 원본 이벤트 배치 기록
-// ---------------------------------------------------------------------------
-
 type RawEvent struct {
-	BID     string
-	BroadNo string
-	Svc     string
-	Parts   []string
-	Raw     []byte
-	RecvAt  time.Time
+	BID, BroadNo, Svc string
+	Parts             []string
+	Raw               []byte
+	RecvAt            time.Time
 }
-
-// RawWriter는 원본 패킷을 모아 COPY로 일괄 기록한다.
-// 대형 방송은 초당 100+ 패킷을 만들므로 건건이 INSERT하면 DB가 먼저 무너진다.
 type RawWriter struct {
 	store   *Store
 	in      chan RawEvent
@@ -147,16 +183,8 @@ type RawWriter struct {
 }
 
 func NewRawWriter(s *Store) *RawWriter {
-	return &RawWriter{
-		store:   s,
-		in:      make(chan RawEvent, 8192),
-		flushN:  500,
-		flushAt: 2 * time.Second,
-	}
+	return &RawWriter{store: s, in: make(chan RawEvent, 8192), flushN: 500, flushAt: 2 * time.Second}
 }
-
-// Write는 절대 블로킹하지 않는다.
-// 큐가 가득 차면 원본 로그를 버린다 — 수집 지연이 채팅 소켓 읽기를 막는 것보다 낫다.
 func (w *RawWriter) Write(e RawEvent) {
 	select {
 	case w.in <- e:
@@ -164,36 +192,26 @@ func (w *RawWriter) Write(e RawEvent) {
 		w.dropped++
 	}
 }
-
 func (w *RawWriter) Run(ctx context.Context) {
 	buf := make([]RawEvent, 0, w.flushN)
 	t := time.NewTicker(w.flushAt)
 	defer t.Stop()
-
 	flush := func() {
-		if len(buf) == 0 {
-			return
+		if len(buf) > 0 {
+			if err := w.copyIn(ctx, buf); err != nil {
+				w.store.Log.Error("원본 이벤트 기록 실패", "n", len(buf), "err", err)
+			}
+			buf = buf[:0]
 		}
-		if err := w.copyIn(ctx, buf); err != nil {
-			w.store.Log.Error("원본 이벤트 기록 실패", "n", len(buf), "err", err)
-		}
-		buf = buf[:0]
 	}
-
 	for {
 		select {
 		case <-ctx.Done():
-			// 종료 시 남은 것을 밀어낸다. ctx가 이미 취소됐으므로 새 컨텍스트를 쓴다.
 			drain, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			if len(buf) > 0 {
-				if err := w.copyIn(drain, buf); err != nil {
-					w.store.Log.Error("종료 시 기록 실패", "err", err)
-				}
+				_ = w.copyIn(drain, buf)
 			}
 			cancel()
-			if w.dropped > 0 {
-				w.store.Log.Warn("원본 이벤트 유실", "count", w.dropped)
-			}
 			return
 		case e := <-w.in:
 			buf = append(buf, e)
@@ -205,44 +223,29 @@ func (w *RawWriter) Run(ctx context.Context) {
 		}
 	}
 }
-
 func (w *RawWriter) copyIn(ctx context.Context, batch []RawEvent) error {
-	rows := make([][]any, 0, len(batch))
+	tx, err := w.store.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	for _, e := range batch {
 		parts, err := json.Marshal(e.Parts)
 		if err != nil {
 			continue
 		}
-		var broadNo *int64
+		var broad any
 		if n, err := strconv.ParseInt(e.BroadNo, 10, 64); err == nil {
-			broadNo = &n
+			broad = n
 		}
-		rows = append(rows, []any{e.BID, broadNo, e.Svc, parts, e.Raw, e.RecvAt})
+		if _, err = tx.Exec(ctx, `INSERT INTO raw_chat_events (bid,broad_no,svc,parts,raw,recv_at) VALUES ($1,$2,$3,$4,$5,$6)`, e.BID, broad, e.Svc, parts, e.Raw, e.RecvAt); err != nil {
+			return err
+		}
 	}
-	if len(rows) == 0 {
-		return nil
-	}
-	_, err := w.store.Pool.CopyFrom(ctx,
-		pgx.Identifier{"raw_chat_events"},
-		[]string{"bid", "broad_no", "svc", "parts", "raw", "recv_at"},
-		pgx.CopyFromRows(rows))
-	return err
+	return tx.Commit(ctx)
 }
-
-// ---------------------------------------------------------------------------
-// 시청자
-// ---------------------------------------------------------------------------
-
-// TouchUser는 시청자를 기록하고 팬클럽 주차를 갱신한다.
-// fanclubWeeks가 -1이면 미가입 상태이므로 기존 값을 덮어쓰지 않는다.
 func (s *Store) TouchUser(ctx context.Context, bid, userID, nick string, fanclubWeeks int) error {
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO users (bid, user_id, nickname, fanclub_weeks)
-		VALUES ($1, $2, NULLIF($3,''), $4)
-		ON CONFLICT (bid, user_id) DO UPDATE
-		   SET nickname      = COALESCE(NULLIF(EXCLUDED.nickname,''), users.nickname),
-		       fanclub_weeks = GREATEST(users.fanclub_weeks, EXCLUDED.fanclub_weeks),
-		       last_seen     = now()`,
-		bid, userID, nick, fanclubWeeks)
+	_, err := s.Pool.Exec(ctx, `INSERT INTO users (bid,user_id,nickname,fanclub_weeks) VALUES ($1,$2,NULLIF($3,''),$4)
+        ON DUPLICATE KEY UPDATE nickname=COALESCE(NULLIF(VALUES(nickname),''),nickname), fanclub_weeks=GREATEST(fanclub_weeks,VALUES(fanclub_weeks)), last_seen=NOW(6)`, bid, userID, nick, fanclubWeeks)
 	return err
 }
