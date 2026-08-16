@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -25,7 +26,10 @@ func (s *Server) oauthRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/oauth/providers", s.h(s.handleOAuthProviders))
 	mux.Handle("GET /api/oauth/{provider}/start", s.h(s.handleOAuthStart))
 	mux.Handle("GET /api/oauth/{provider}/callback", s.h(s.handleOAuthCallback))
-	mux.Handle("GET /api/extension/session/start", s.session(s.handleExtensionSessionStart))
+	// 로그인 여부를 여기서 직접 판별해, 웹 세션이 없을 때도 확장이 자신의
+	// chromiumapp.org 콜백에서 이유를 읽을 수 있게 한다. 유효 세션 없이는
+	// 어떤 코드도 만들지 않으므로 공개 경로여도 권한이 생기지 않는다.
+	mux.Handle("GET /api/extension/session/start", s.h(s.handleExtensionSessionStart))
 	mux.Handle("POST /api/extension/session/exchange", s.h(s.handleExtensionSessionExchange))
 }
 
@@ -189,7 +193,17 @@ func (s *Server) handleExtensionSessionStart(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	code, err := auth.NewExtensionCode(r.Context(), s.Store.Pool, accountOf(r).ID, redirectURI, codeChallenge, clientState)
+	acct, err := auth.Resolve(r.Context(), s.Store.Pool, sessionToken(r))
+	if errors.Is(err, auth.ErrNoSession) || errors.Is(err, auth.ErrDisabled) {
+		return bounce(w, r, redirectURI, url.Values{
+			"error":        {"web_session_missing"},
+			"client_state": {clientState},
+		})
+	}
+	if err != nil {
+		return err
+	}
+	code, err := auth.NewExtensionCode(r.Context(), s.Store.Pool, acct.ID, redirectURI, codeChallenge, clientState)
 	if err != nil {
 		return err
 	}
