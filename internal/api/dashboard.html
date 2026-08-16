@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SoopTalent</title>
+<style>
+  /* SOOP 계열 파랑. 뉴트럴도 파랑 쪽으로 기울여 한 벌로 보이게 한다.
+     의미색(성공/주의/오류)은 강조색과 별개다. */
+  :root {
+    --bg:#ffffff; --bg-soft:#f4f6fb; --bg-inset:#e8ecf5;
+    --fg:#161a22; --fg-muted:#5b6272; --line:#d6dbe6;
+    --accent:#1a56db; --accent-soft:#e7eefc; --accent-fg:#ffffff;
+    --ok:#1a7f52; --warn:#97620a; --bad:#b3261e;
+    --ok-bg:#e6f4ec; --warn-bg:#fdf3e2; --bad-bg:#fdecea;
+    --r:9px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#12151c; --bg-soft:#1a1e28; --bg-inset:#232837;
+      --fg:#e4e8f0; --fg-muted:#949cae; --line:#303648;
+      --accent:#6aa4ff; --accent-soft:#1b2740; --accent-fg:#0b1220;
+      --ok:#63cd97; --warn:#e0ab5a; --bad:#f2837b;
+      --ok-bg:#16281f; --warn-bg:#2e2617; --bad-bg:#2e1d1c;
+    }
+  }
+  * { box-sizing:border-box; }
+  /* display를 지정한 클래스(.stack 등)가 브라우저 기본 [hidden] 규칙을 덮어쓴다.
+     hidden 속성이 항상 이기도록 못박는다. */
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 "Pretendard","Malgun Gothic","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:24px 20px 80px; }
+  h1 { font-size:20px; margin:0; letter-spacing:-.01em; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  p { margin:0 0 8px; }
+  .muted { color:var(--fg-muted); }
+  .small { font-size:12.5px; }
+  .mono { font-family:"Cascadia Mono",Consolas,monospace; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header.top { display:flex; align-items:center; justify-content:space-between;
+               gap:12px; padding-bottom:16px; margin-bottom:18px;
+               border-bottom:1px solid var(--line); }
+  .brand { display:flex; align-items:center; gap:9px; }
+  .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
+          display:grid; place-items:center; }
+  .logo i { display:block; width:13px; height:11px;
+            background:
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 0 100%/3px 5px no-repeat,
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 5px 100%/3px 8px no-repeat,
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 10px 100%/3px 11px no-repeat; }
+
+  input, button, select, textarea { font:inherit; }
+  input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],
+  textarea, select {
+    padding:8px 10px; border:1px solid var(--line); border-radius:6px;
+    background:var(--bg); color:var(--fg); width:100%; }
+  input[type=number] { font-variant-numeric: tabular-nums; }
+  textarea { min-height:64px; resize:vertical; }
+  button { padding:7px 13px; border:1px solid var(--line); border-radius:6px;
+           background:var(--bg); color:var(--fg); cursor:pointer;
+           transition:background-color .12s ease; }
+  button:hover:not(:disabled) { background:var(--bg-inset); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent);
+                   color:var(--accent-fg); font-weight:600; }
+  button.primary:hover:not(:disabled) { filter:brightness(1.08); background:var(--accent); }
+  button.danger { color:var(--bad); border-color:var(--bad); }
+  button.sm { padding:4px 9px; font-size:12.5px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .card { background:var(--bg-soft); border:1px solid var(--line);
+          border-radius:var(--r); padding:16px; }
+  .stack { display:flex; flex-direction:column; gap:12px; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+
+  .notice { border-radius:6px; padding:10px 13px; margin:12px 0; font-size:13px; }
+  .notice.ok{background:var(--ok-bg);color:var(--ok)}
+  .notice.warn{background:var(--warn-bg);color:var(--warn)}
+  .notice.bad{background:var(--bad-bg);color:var(--bad)}
+  .notice:empty{display:none}
+
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px;
+           border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .badge::before { font-weight:700; }
+  .badge.ok{background:var(--ok-bg);color:var(--ok)}      .badge.ok::before{content:"●"}
+  .badge.warn{background:var(--warn-bg);color:var(--warn)}.badge.warn::before{content:"▲"}
+  .badge.bad{background:var(--bad-bg);color:var(--bad)}   .badge.bad::before{content:"■"}
+  .badge.info{background:var(--accent-soft);color:var(--accent)} .badge.info::before{content:"◆"}
+  /* 꺼 둔 것은 고장이 아니다 — 빨강 대신 회색으로 둔다 */
+  .badge.off{background:var(--bg-inset);color:var(--fg-muted)} .badge.off::before{content:"○"}
+
+  /* 헤더의 연결 배지. 어느 탭에 있든 보인다 */
+  button.chip { border:none; background:none; padding:0; cursor:pointer; }
+  button.chip:hover:not(:disabled) { background:none; filter:brightness(.94); }
+
+  /* 연결 상태 표 — 항목 / 배지 / 설명 */
+  .conn { display:grid; grid-template-columns:auto auto 1fr auto; gap:9px 12px;
+          align-items:center; }
+  .conn > .k { color:var(--fg-muted); font-size:13px; white-space:nowrap; }
+  .conn > .d { color:var(--fg-muted); font-size:12.5px; min-width:0;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  @media (max-width:560px) {
+    .conn { grid-template-columns:auto 1fr; }
+    .conn > .d { grid-column:1/-1; margin-top:-6px; }
+  }
+
+  nav.tabs { display:flex; gap:4px; margin-bottom:18px; overflow-x:auto; }
+  nav.tabs button { border:none; border-radius:0; background:none; padding:8px 12px;
+                    color:var(--fg-muted); border-bottom:2px solid transparent;
+                    white-space:nowrap; }
+  nav.tabs button:hover { background:none; color:var(--fg); }
+  nav.tabs button[aria-selected=true] { color:var(--accent); font-weight:600;
+                                        border-bottom-color:var(--accent); }
+
+  .stat { background:var(--bg-soft); border:1px solid var(--line);
+          border-radius:var(--r); padding:14px 16px; }
+  .stat .k { color:var(--fg-muted); font-size:12.5px; }
+  .stat .v { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums;
+             letter-spacing:-.02em; margin-top:2px; }
+
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--r); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 11px; border-bottom:1px solid var(--line);
+          white-space:nowrap; }
+  th { background:var(--bg-soft); font-size:12px; color:var(--fg-muted); font-weight:600; }
+  tbody tr:last-child td { border-bottom:none; }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .pos { color:var(--ok); font-weight:600; }
+  .neg { color:var(--bad); font-weight:600; }
+
+  .logline { font-family:"Cascadia Mono",Consolas,monospace; font-size:12.5px;
+             padding:5px 11px; border-bottom:1px solid var(--line); }
+  .logline:last-child { border-bottom:none; }
+
+  .rule-grid { display:grid; grid-template-columns:1fr auto; gap:9px 16px; align-items:center; }
+  .rule-grid .hint { grid-column:1/-1; margin-top:-4px; color:var(--fg-muted); font-size:12.5px; }
+
+  .item-row { display:grid; grid-template-columns:64px 1fr 96px 92px 92px auto; gap:8px; align-items:center; }
+  .item-row .lbl { display:none; }
+  @media (max-width:620px) {
+    .item-row { grid-template-columns:64px 1fr; }
+    .item-row .lbl { display:block; font-size:11.5px; color:var(--fg-muted); }
+  }
+
+  /* 보상 미리보기 — 비어 있어도 자리를 유지해 줄이 흔들리지 않게 한다 */
+  .thumb { width:56px; height:56px; border-radius:7px; border:1px dashed var(--line);
+           background:var(--bg-inset); display:grid; place-items:center; cursor:pointer;
+           overflow:hidden; position:relative; padding:0; }
+  .thumb:hover { border-color:var(--accent); }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .ph { font-size:10.5px; color:var(--fg-muted); text-align:center; line-height:1.3; }
+  .thumb.busy { opacity:.6; cursor:progress; }
+  .thumb-clear { position:absolute; top:2px; right:2px; width:16px; height:16px;
+                 border-radius:50%; border:none; padding:0; font-size:10px; line-height:1;
+                 background:rgba(0,0,0,.55); color:#fff; cursor:pointer; }
+
+  /* 시청자에게 보이는 보상 표 */
+  td .item-thumb { width:38px; height:38px; border-radius:6px; object-fit:cover;
+                   display:block; border:1px solid var(--line); }
+
+  /* 달란트 시장 — 왼쪽 목록에서 고르고 오른쪽에서 본다 */
+  .shop-layout { display:grid; grid-template-columns:250px 1fr; gap:16px; align-items:start; }
+  @media (max-width:760px) { .shop-layout { grid-template-columns:1fr; } }
+
+  .shop-side { display:flex; flex-direction:column; gap:10px; position:sticky; top:12px; }
+  .shop-new { display:flex; gap:6px; }
+  /* 입력창이 남는 폭을 가져가고, 버튼은 글자 폭 그대로 둔다.
+     flex 기본값(shrink:1)이면 좁은 사이드바에서 버튼 글자가 줄바꿈된다. */
+  .shop-new input { flex:1 1 auto; min-width:0; }
+  .shop-new button { flex:0 0 auto; white-space:nowrap; }
+
+  .page-list { list-style:none; margin:0; padding:0;
+               display:flex; flex-direction:column; gap:4px; }
+  .page-item { width:100%; display:flex; align-items:center; justify-content:space-between;
+               gap:8px; padding:9px 11px; border:1px solid var(--line);
+               border-radius:7px; background:var(--bg); cursor:pointer; text-align:left; }
+  .page-item:hover { background:var(--bg-inset); }
+  .page-item[aria-current=true] {
+    border-color:var(--accent); background:var(--accent-soft); font-weight:600; }
+  .page-item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .page-item .dot { width:8px; height:8px; border-radius:50%; flex:0 0 8px; }
+  .page-item .dot.draft  { background:var(--warn); }
+  .page-item .dot.open   { background:var(--ok); }
+  .page-item .dot.closed { background:var(--fg-muted); }
+
+  .shop-detail { min-width:0; }
+  .detail-head { display:flex; align-items:center; justify-content:space-between;
+                 gap:10px; margin-bottom:14px; }
+  .detail-head h2 { margin:0; }
+
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field > .label { font-weight:600; font-size:13px; }
+  .field > .hint { color:var(--fg-muted); font-size:12.5px; }
+  .empty { color:var(--fg-muted); padding:26px; text-align:center; }
+  .divider { display:flex; align-items:center; gap:8px; color:var(--fg-muted);
+             font-size:12px; margin:4px 0; }
+  .divider::before,.divider::after { content:""; flex:1; height:1px; background:var(--line); }
+  code { background:var(--bg-inset); padding:1px 5px; border-radius:4px;
+         font-family:"Cascadia Mono",Consolas,monospace; font-size:12.5px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <span class="logo"><i></i></span>
+      <h1>SoopTalent</h1>
+    </div>
+    <div class="row" id="whoami" hidden>
+      <a class="small" href="/guide" target="_blank">사용 가이드</a>
+      <span class="small muted" id="meLabel"></span>
+      <span class="badge info" id="bidBadge" hidden></span>
+      <!-- 어느 탭에 있든 보이는 연결 요약. 누르면 자세한 내용으로 데려간다 -->
+      <button class="badge warn chip" id="connChip" hidden title="연결 상태 보기">확인 중</button>
+      <button class="sm" id="logout">로그아웃</button>
+    </div>
+  </header>
+
+  <div id="message" class="notice"></div>
+
+  <!-- ── 로그인 ─────────────────────────────────────────────────────── -->
+  <section id="authView" hidden>
+    <div class="card stack" style="max-width:400px;margin:0 auto">
+      <h2 id="authTitle">로그인</h2>
+      <div class="stack" id="socialBox"></div>
+      <p class="small muted" id="socialHelp" hidden>로그인 제공자를 설정 중입니다. 잠시 후 다시 시도해 주세요.</p>
+    </div>
+  </section>
+
+  <!-- ── 연결 신청 안내 ─────────────────────────────────────────────── -->
+  <section id="claimView" hidden>
+    <div class="card stack">
+      <h2>스트리머 연결이 필요합니다</h2>
+      <div id="claimStatus"></div>
+      <p class="muted small" style="margin:0">
+        확장 프로그램에서 SOOP 계정으로 연결을 신청하면 운영자가 확인 후 승인합니다.
+        승인되면 이 화면에서 달란트 기준과 달란트 시장을 관리할 수 있습니다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── 본 화면 ────────────────────────────────────────────────────── -->
+  <section id="mainView" hidden>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="overview" aria-selected="true">대시보드</button>
+      <button role="tab" data-tab="log"      aria-selected="false">달란트 내역</button>
+      <button role="tab" data-tab="grant"    aria-selected="false">직접 지급</button>
+      <button role="tab" data-tab="shop"     aria-selected="false">달란트 시장</button>
+      <button role="tab" data-tab="rules"    aria-selected="false">달란트 기준</button>
+    </nav>
+
+    <!-- 대시보드 -->
+    <div class="tabpane stack" data-pane="overview">
+      <div class="card stack" id="connCard">
+        <div class="row" style="justify-content:space-between">
+          <h3 style="margin:0">연결 상태</h3>
+          <div class="row">
+            <span class="small muted" id="connCheckedAt"></span>
+            <button class="sm" id="connRefresh">새로고침</button>
+          </div>
+        </div>
+        <div class="conn" id="connRows"></div>
+        <p class="small muted" style="margin:0" id="connNote"></p>
+      </div>
+
+      <div class="grid2">
+        <div class="stat"><div class="k">보유자</div><div class="v" id="stUsers">—</div></div>
+        <div class="stat"><div class="k">누적 지급</div><div class="v" id="stPoints">—</div></div>
+        <div class="stat"><div class="k">적립 건수</div><div class="v" id="stEvents">—</div></div>
+        <div class="stat"><div class="k">방송</div><div class="v" id="stLive">—</div></div>
+      </div>
+      <div class="card">
+        <h3>달란트 보유 순위</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>시청자</th><th style="text-align:right">달란트</th></tr></thead>
+            <tbody id="holders"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 달란트 내역 -->
+    <div class="tabpane stack" data-pane="log" hidden>
+      <div class="card stack">
+        <div class="row">
+          <input type="text" id="logUser" placeholder="시청자 아이디로 검색" style="flex:1;min-width:180px">
+          <select id="logKind" style="width:auto">
+            <option value="">전체 사유</option>
+            <option value="stay">방송 시청</option>
+            <option value="chat">채팅 참여</option>
+            <option value="rank_watch">일별 시청 랭킹</option>
+            <option value="rank_chat">일별 채팅 랭킹</option>
+            <option value="donation">후원</option>
+            <option value="subscribe">구독</option>
+            <option value="fanclub">팬클럽 가입</option>
+            <option value="board_post">게시글 작성</option>
+            <option value="board_comment">댓글 작성</option>
+            <option value="manual">직접 지급</option>
+            <option value="purchase">보상 교환</option>
+          </select>
+          <button id="logSearch">조회</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0">
+        <div id="logList"></div>
+      </div>
+      <div class="row" style="justify-content:center">
+        <button id="logMore" hidden>더 보기</button>
+      </div>
+    </div>
+
+    <!-- 직접 지급 -->
+    <div class="tabpane stack" data-pane="grant" hidden>
+      <div class="card stack" style="max-width:520px">
+        <h2>달란트 직접 지급</h2>
+        <div class="field">
+          <label class="label" for="grantUser">시청자 아이디</label>
+          <input type="text" id="grantUser" placeholder="예: chulsoo123" spellcheck="false">
+          <span class="hint">SOOP 아이디입니다. 닉네임이 아닙니다.</span>
+        </div>
+        <div class="field">
+          <label class="label" for="grantAmount">달란트</label>
+          <input type="number" id="grantAmount" placeholder="100" step="1">
+          <span class="hint">음수를 넣으면 회수됩니다. 예: -50</span>
+        </div>
+        <div class="field">
+          <label class="label" for="grantReason">사유</label>
+          <input type="text" id="grantReason" placeholder="예: 이벤트 당첨 보상" maxlength="200">
+          <span class="hint">내역에 그대로 기록됩니다. 나중에 왜 줬는지 알 수 있게 적어 주세요.</span>
+        </div>
+        <div class="row">
+          <button class="primary" id="doGrant">지급</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0" id="recentGrantCard" hidden>
+        <div style="padding:12px 16px 4px"><h3 style="margin:0">최근 직접 지급</h3></div>
+        <div id="recentGrants"></div>
+      </div>
+    </div>
+
+    <!-- 달란트 시장 -->
+    <div class="tabpane" data-pane="shop" hidden>
+      <div class="shop-layout">
+        <aside class="shop-side">
+          <div class="shop-new">
+            <input type="text" id="newPageTitle" placeholder="새 페이지 이름">
+            <button class="primary" id="createPage">추가</button>
+          </div>
+          <ul id="pageList" class="page-list"></ul>
+          <p class="muted small" style="margin:0;padding:0 2px">
+            동시에 열 수 있는 페이지는 <strong>하나</strong>입니다.
+          </p>
+        </aside>
+        <section id="pageDetail" class="shop-detail"></section>
+      </div>
+    </div>
+
+    <!-- 달란트 기준 -->
+    <div class="tabpane stack" data-pane="rules" hidden>
+      <p class="muted small" style="margin:0">
+        전부 기본값이 들어 있습니다. 그대로 두셔도 정상 동작합니다.
+        변경한 값은 <strong>저장 이후 활동부터</strong> 적용됩니다.
+      </p>
+
+      <div class="card stack">
+        <h3>시청 체류</h3>
+        <div class="rule-grid">
+          <span>지급 주기</span><span><input type="number" id="stay.intervalMinutes" min="1" max="120"> 분</span>
+          <span>회당 달란트</span><span><input type="number" id="stay.points" min="0" max="10000"> 달란트</span>
+          <span>세션 유지 유예</span><span><input type="number" id="stay.graceSeconds" min="0" max="900"> 초</span>
+          <span class="hint">잠깐 끊겨도 이 시간 안에 다시 접속하면 같은 시청으로 봅니다.</span>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <h3>채팅</h3>
+        <div class="rule-grid">
+          <span>채팅 1건당</span><span><input type="number" id="chat.points" min="0" max="10000"> 달란트</span>
+          <span>최소 글자 수</span><span><input type="number" id="chat.minLength" min="1" max="50"> 자</span>
+          <span>분당 인정 건수</span><span><input type="number" id="chat.perMinuteCap" min="1" max="60"> 건</span>
+          <span>하루 최대</span><span><input type="number" id="chat.dailyCap" min="0" max="100000"> 달란트</span>
+          <span class="hint">도배로 달란트를 쌓는 것을 막는 값입니다.</span>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <h3>일별 랭킹 가산점</h3>
+        <div class="rule-grid">
+          <span>1위 달란트</span><span><input type="number" id="rank.topPoints" min="0" max="100000"> 달란트</span>
+          <span class="hint">100위까지 순위에 따라 줄어듭니다. 1위 100이면 50위는 51입니다.</span>
+          <span><label for="rank.enableWatch">참여시간 랭킹 반영</label></span>
+          <span><input type="checkbox" id="rank.enableWatch" style="width:auto"></span>
+          <span><label for="rank.enableChat">채팅입력 랭킹 반영</label></span>
+          <span><input type="checkbox" id="rank.enableChat" style="width:auto"></span>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <h3>후원 · 구독 · 팬클럽</h3>
+        <div class="rule-grid">
+          <span>별풍선 1개당</span><span><input type="number" id="donation.starBalloonRate" min="0" max="10000"> 달란트</span>
+          <span>애드벌룬 1개당</span><span><input type="number" id="donation.adBalloonRate" min="0" max="10000"> 달란트</span>
+          <span>구독 기본</span><span><input type="number" id="subscribe.base" min="0" max="100000"> 달란트</span>
+          <span>구독 개월당</span><span><input type="number" id="subscribe.perMonth" min="0" max="10000"> 달란트</span>
+          <span>개월 수 상한</span><span><input type="number" id="subscribe.maxMonths" min="1" max="600"> 개월</span>
+          <span>팬클럽 가입</span><span><input type="number" id="fanclub.joinPoints" min="0" max="100000"> 달란트</span>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <h3>게시판 수동 지급</h3>
+        <div class="rule-grid">
+          <span>게시글</span><span><input type="number" id="manual.postPoints" min="0" max="100000"> 달란트</span>
+          <span>댓글</span><span><input type="number" id="manual.commentPoints" min="0" max="100000"> 달란트</span>
+          <span class="hint">방송국 게시판의 버튼을 눌렀을 때 지급되는 기본값입니다.</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="primary" id="saveRules">저장</button>
+        <button id="resetRules">기본값으로</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY = "sooptalent.token";
+let token = localStorage.getItem(KEY) || "";
+let me = null;
+let logCursor = 0;
+
+function msg(kind, text) {
+  const el = $("message");
+  el.className = text ? `notice ${kind}` : "notice";
+  el.textContent = text || "";
+  if (text) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) { signOut(); throw new Error("로그인이 필요합니다."); }
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    const e = new Error(body?.error || `요청 실패 (HTTP ${res.status})`);
+    e.code = body?.code;
+    throw e;
+  }
+  return body;
+}
+
+const fmtNum = (n) => Number(n || 0).toLocaleString("ko-KR");
+function fmtDate(s) {
+  if (!s) return "";
+  return new Date(s).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+}
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid) e.append(kid);
+  return e;
+}
+
+// ── 인증 ─────────────────────────────────────────────────────────────
+function signOut() {
+  token = ""; me = null;
+  localStorage.removeItem(KEY);
+  stopConnPolling();
+  $("connChip").hidden = true;
+  $("authView").hidden = false;
+  $("claimView").hidden = true;
+  $("mainView").hidden = true;
+  $("whoami").hidden = true;
+  loadProviders();
+}
+
+async function loadProviders() {
+  const box = $("socialBox");
+  box.replaceChildren();
+  $("socialHelp").hidden = true;
+  try {
+    const list = await fetch("/api/oauth/providers").then((r) => r.json());
+    if (!list?.length) { $("socialHelp").hidden = false; return; }
+    for (const p of list) {
+      box.append(el("button", {
+        text: `${p.label}로 계속하기`,
+        onclick: () => {
+          // 웹에서는 서버 콜백이 이 페이지로 되돌아온다.
+          const back = location.origin + "/";
+          location.href = `/api/oauth/${p.id}/start?redirect_uri=${encodeURIComponent(back)}`;
+        },
+      }));
+    }
+  } catch { /* 소셜 로그인 미설정 */ }
+}
+
+$("logout").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch {}
+  signOut();
+});
+
+// ── 탭 ───────────────────────────────────────────────────────────────
+document.querySelectorAll("nav.tabs button").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button")
+      .forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+    document.querySelectorAll(".tabpane")
+      .forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+    msg(null);
+    if (b.dataset.tab === "log") loadLog(true);
+    if (b.dataset.tab === "shop") loadPages();
+    if (b.dataset.tab === "rules") loadRules();
+    if (b.dataset.tab === "overview") { loadOverview(); loadConn(); }
+  });
+});
+
+// ── 연결 상태 ────────────────────────────────────────────────────────
+// 서버·세션·채팅 연동·방송을 한 줄씩 보여 준다.
+// 판정과 문구는 전부 서버(/api/status)가 내려준 것을 그대로 쓴다.
+const CONN_POLL_MS = 20000;
+let connTimer = null;
+
+// 로컬 DB는 왕복이 0.05ms 아래일 때가 흔하다. 그대로 반올림하면 "0ms"가 된다.
+const fmtMs = (ms) => (ms > 0 ? `${ms}ms` : "1ms 미만");
+
+function ago(iso) {
+  if (!iso) return "";
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (s < 5) return "방금";
+  if (s < 60) return `${s}초 전`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}시간 전`;
+  return `${Math.floor(h / 24)}일 전`;
+}
+
+/** 연결 표에 한 줄 넣는다. 열은 항목 / 배지 / 설명 / 버튼 순이다. */
+function connRow(name, tone, label, detail, action) {
+  const box = $("connRows");
+  box.append(
+    el("span", { class: "k", text: name }),
+    el("span", { class: `badge ${tone || "warn"}`, text: label || "—" }),
+    el("span", { class: "d", text: detail || "", title: detail || "" }),
+    action || el("span", {}));
+}
+
+function setChip(tone, label) {
+  const chip = $("connChip");
+  chip.className = `badge ${tone} chip`;
+  chip.textContent = label;
+  chip.hidden = false;
+}
+
+function renderConn(s) {
+  $("connRows").replaceChildren();
+  $("connCheckedAt").textContent = new Date().toLocaleTimeString("ko-KR");
+
+  connRow("서버", s.database.tone, s.database.label,
+    s.database.detail || (s.database.latencyMs != null
+      ? `데이터베이스 응답 ${fmtMs(s.database.latencyMs)}` : ""));
+
+  connRow("로그인 세션", s.session.tone, s.session.label,
+    s.session.detail
+      ? s.session.detail
+      : s.session.expiresAt
+        ? `${fmtDate(s.session.expiresAt)}까지 (${fmtNum(s.session.daysLeft)}일 남음)`
+        : "");
+
+  // 채팅 연동 — 여기서만 켜고 끌 수 있다
+  const c = s.chat;
+  const bits = [c.detail];
+  if (c.broadNo) bits.push(`방송 ${c.broadNo}`);
+  if (c.lastPacketAt) bits.push(`마지막 수신 ${ago(c.lastPacketAt)}`);
+  if (c.packets) bits.push(`누적 ${fmtNum(c.packets)}건`);
+
+  const toggle = el("button", {
+    class: c.enabled ? "sm danger" : "sm primary",
+    text: c.enabled ? "끄기" : "켜기",
+    onclick: () => setChat(!c.enabled),
+  });
+  connRow("채팅 연동", c.tone, c.label, bits.filter(Boolean).join(" · "), toggle);
+
+  connRow("방송", s.live ? "ok" : "off", s.live ? "방송 중" : "대기",
+    s.live ? "" : "방송이 시작되면 자동으로 수집합니다.");
+
+  // 끊긴 이유는 다시 붙어도 남겨 둔다 — "아까 왜 끊겼지"에 답할 수 있어야 한다.
+  $("connNote").textContent =
+    c.lastError && c.tone !== "ok" ? `마지막 오류: ${c.lastError}` : "";
+
+  setChip(s.overall, {
+    ok: "정상", off: "일부 꺼짐", warn: "확인 필요", bad: "문제 있음",
+  }[s.overall] ?? "확인 필요");
+}
+
+function renderConnOffline(reason) {
+  $("connRows").replaceChildren();
+  $("connCheckedAt").textContent = new Date().toLocaleTimeString("ko-KR");
+  connRow("서버", "bad", "응답 없음", reason || "상태를 확인하지 못했습니다.");
+  $("connNote").textContent = "";
+  setChip("bad", "서버 응답 없음");
+}
+
+async function loadConn({ announce = false } = {}) {
+  try {
+    renderConn(await api("/api/status"));
+  } catch (e) {
+    renderConnOffline(e.message);
+    if (announce) msg("bad", e.message);
+  }
+}
+
+async function setChat(on) {
+  if (!on && !confirm(
+      "채팅 연동을 끕니다.\n\n" +
+      "시청 체류·채팅·후원·구독 달란트가 더 이상 쌓이지 않습니다.\n" +
+      "랭킹 동기화와 게시판 직접 지급은 그대로 동작합니다.\n\n계속할까요?")) {
+    return;
+  }
+  try {
+    await api("/api/collector/chat", {
+      method: "PUT", body: JSON.stringify({ enabled: on }),
+    });
+    msg("ok", on
+      ? "채팅 연동을 켰습니다. 방송 중이면 곧 수집이 시작됩니다."
+      : "채팅 연동을 껐습니다. 쌓인 달란트는 그대로 남습니다.");
+  } catch (e) {
+    msg("bad", e.message);
+  }
+  loadConn();
+}
+
+function startConnPolling() {
+  stopConnPolling();
+  // 보이지 않는 탭에서까지 두드리지 않는다.
+  connTimer = setInterval(() => {
+    if (document.visibilityState === "visible") loadConn();
+  }, CONN_POLL_MS);
+}
+function stopConnPolling() {
+  if (connTimer) clearInterval(connTimer);
+  connTimer = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && connTimer) loadConn();
+});
+$("connRefresh").addEventListener("click", () => loadConn({ announce: true }));
+$("connChip").addEventListener("click", () => {
+  document.querySelector('nav.tabs button[data-tab="overview"]')?.click();
+  $("connCard").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+
+// ── 대시보드 ─────────────────────────────────────────────────────────
+async function loadOverview() {
+  try {
+    const [s, holders] = await Promise.all([api("/api/summary"), api("/api/points/holders?limit=20")]);
+    $("stUsers").textContent = fmtNum(s.users);
+    $("stPoints").textContent = fmtNum(s.totalPoints);
+    $("stEvents").textContent = fmtNum(s.events);
+    $("stLive").textContent = s.live ? "방송 중" : "대기";
+
+    const tb = $("holders");
+    tb.replaceChildren();
+    if (!holders.length) {
+      tb.append(el("tr", {}, el("td", { colspan: "3", class: "empty", text: "아직 달란트 보유자가 없습니다." })));
+      return;
+    }
+    holders.forEach((h, i) => {
+      tb.append(el("tr", {},
+        el("td", { class: "num", text: String(i + 1) }),
+        el("td", { text: h.nickname ? `${h.nickname} (${h.userId})` : h.userId }),
+        el("td", { class: "n", text: fmtNum(h.total) })));
+    });
+  } catch (e) { msg("bad", e.message); }
+}
+
+// ── 달란트 내역 ──────────────────────────────────────────────────────
+async function loadLog(reset) {
+  if (reset) { logCursor = 0; $("logList").replaceChildren(); }
+  try {
+    const q = new URLSearchParams({ limit: "60" });
+    if ($("logUser").value.trim()) q.set("userId", $("logUser").value.trim());
+    if ($("logKind").value) q.set("kind", $("logKind").value);
+    if (logCursor) q.set("before", String(logCursor));
+
+    const rows = await api(`/api/points/log?${q}`);
+    const box = $("logList");
+    if (reset && !rows.length) {
+      box.append(el("div", { class: "empty", text: "내역이 없습니다." }));
+      $("logMore").hidden = true;
+      return;
+    }
+    for (const r of rows) {
+      box.append(el("div", { class: "logline", text: r.line }));
+      logCursor = r.id;
+    }
+    $("logMore").hidden = rows.length < 60;
+  } catch (e) { msg("bad", e.message); }
+}
+$("logSearch").addEventListener("click", () => loadLog(true));
+$("logMore").addEventListener("click", () => loadLog(false));
+$("logUser").addEventListener("keydown", (e) => { if (e.key === "Enter") loadLog(true); });
+
+// ── 직접 지급 ────────────────────────────────────────────────────────
+$("doGrant").addEventListener("click", async () => {
+  const btn = $("doGrant");
+  btn.disabled = true; msg(null);
+  try {
+    const entry = await api("/api/points/grant", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: $("grantUser").value.trim(),
+        amount: Number($("grantAmount").value),
+        reason: $("grantReason").value.trim(),
+      }),
+    });
+    msg("ok", entry.line);
+    $("grantAmount").value = ""; $("grantReason").value = "";
+    loadRecentGrants();
+  } catch (e) { msg("bad", e.message); }
+  finally { btn.disabled = false; }
+});
+
+async function loadRecentGrants() {
+  try {
+    const rows = await api("/api/points/log?kind=manual&limit=20");
+    const box = $("recentGrants");
+    box.replaceChildren();
+    if (!rows.length) { $("recentGrantCard").hidden = true; return; }
+    rows.forEach((r) => box.append(el("div", { class: "logline", text: r.line })));
+    $("recentGrantCard").hidden = false;
+  } catch { /* 조용히 넘어간다 */ }
+}
+
+// ── 달란트 시장 ──────────────────────────────────────────────────────
+let selectedPageId = null;
+
+$("createPage").addEventListener("click", async () => {
+  const title = $("newPageTitle").value.trim();
+  if (!title) { msg("warn", "페이지 이름을 입력해 주세요."); return; }
+  try {
+    const p = await api("/api/shop/pages", { method: "POST", body: JSON.stringify({ title }) });
+    $("newPageTitle").value = "";
+    // 방금 만든 페이지를 바로 열어 준다 — 다음에 할 일은 보상 등록이다.
+    selectedPageId = p.id;
+    msg("ok", "보상 페이지를 만들었습니다. 보상을 등록해 주세요.");
+    loadPages();
+  } catch (e) { msg("bad", e.message); }
+});
+$("newPageTitle").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("createPage").click();
+});
+
+async function loadPages() {
+  try {
+    const pages = await api("/api/shop/pages");
+    // 선택이 없거나 사라졌으면 열린 페이지 > 첫 페이지 순으로 고른다.
+    if (!pages.some((p) => p.id === selectedPageId)) {
+      selectedPageId = (pages.find((p) => p.status === "open") ?? pages[0])?.id ?? null;
+    }
+    renderPageList(pages);
+    renderPageDetail(pages.find((p) => p.id === selectedPageId) ?? null);
+  } catch (e) { msg("bad", e.message); }
+}
+
+const STATUS_BADGE = {
+  draft:  ["warn", "작성 중"],
+  open:   ["ok",   "열림"],
+  closed: ["bad",  "닫힘"],
+};
+
+function renderPageList(pages) {
+  const list = $("pageList");
+  list.replaceChildren();
+
+  if (!pages.length) {
+    list.append(el("li", { class: "muted small", style: "padding:10px 2px",
+                           text: "아직 페이지가 없습니다." }));
+    return;
+  }
+  for (const p of pages) {
+    const btn = el("button", {
+      class: "page-item",
+      "aria-current": String(p.id === selectedPageId),
+      title: p.title,
+      onclick: () => {
+        selectedPageId = p.id;
+        renderPageList(pages);
+        renderPageDetail(p);
+        msg(null);
+      },
+    },
+      el("span", { class: "nm", text: p.title }),
+      el("span", { class: `dot ${p.status}`,
+                   title: (STATUS_BADGE[p.status] ?? ["", p.status])[1] }));
+    list.append(el("li", {}, btn));
+  }
+}
+
+function renderPageDetail(p) {
+  const box = $("pageDetail");
+  box.replaceChildren();
+
+  if (!p) {
+    box.append(el("div", { class: "card empty",
+      text: "왼쪽에서 페이지를 고르거나 새로 만들어 주세요." }));
+    return;
+  }
+
+  const [bk, bt] = STATUS_BADGE[p.status] ?? ["info", p.status];
+  const card = el("div", { class: "card stack" },
+    el("div", { class: "detail-head" },
+      el("h2", { text: p.title }),
+      el("span", { class: `badge ${bk}`, text: bt })));
+
+  if (p.status === "draft") card.append(draftBody(p));
+  else if (p.status === "open") card.append(openBody(p));
+  else card.append(closedBody(p));
+
+  box.append(card);
+}
+
+/** 보상 한 줄. 미리보기 이미지는 imageId를 숨은 값으로 들고 다닌다. */
+function itemRow(it = {}) {
+  const imageId = el("input", { type: "hidden", "data-f": "imageId", value: it.imageId ?? "" });
+
+  const thumb = el("button", { class: "thumb", type: "button",
+                               title: "클릭해서 미리보기 이미지를 올립니다" });
+  const file = el("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp",
+                             style: "display:none" });
+
+  const paint = () => {
+    thumb.replaceChildren();
+    if (imageId.value) {
+      thumb.append(el("img", { src: `/api/shop/images/${imageId.value}`, alt: "" }));
+      const clear = el("button", { class: "thumb-clear", type: "button", text: "✕",
+                                   title: "이미지 제거" });
+      clear.addEventListener("click", (e) => {
+        e.stopPropagation();
+        imageId.value = "";
+        paint();
+      });
+      thumb.append(clear);
+    } else {
+      thumb.append(el("span", { class: "ph", text: "사진\n추가" }));
+    }
+  };
+  paint();
+
+  thumb.addEventListener("click", () => file.click());
+  file.addEventListener("change", async () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    thumb.classList.add("busy");
+    try {
+      // 본문에 바이트를 그대로 싣는다. 서버가 매직 바이트로 형식을 확인한다.
+      const r = await fetch("/api/shop/images", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: f,
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `업로드 실패 (HTTP ${r.status})`);
+      imageId.value = b.id;
+      paint();
+      msg(null);
+    } catch (e) {
+      msg("bad", e.message);
+    } finally {
+      thumb.classList.remove("busy");
+      file.value = "";
+    }
+  });
+
+  return el("div", { class: "item-row" },
+    el("div", {}, thumb, file, imageId),
+    el("div", {}, el("div", { class: "lbl", text: "보상 이름" }),
+      el("input", { type: "text", value: it.name ?? "", placeholder: "보상 이름", "data-f": "name" })),
+    el("div", {}, el("div", { class: "lbl", text: "가격" }),
+      el("input", { type: "number", value: it.price ?? 0, min: "0", placeholder: "가격", "data-f": "price" })),
+    el("div", {}, el("div", { class: "lbl", text: "총 수량" }),
+      el("input", { type: "number", value: it.stock ?? "", min: "0", placeholder: "무제한",
+                    title: "이 페이지에서 풀리는 전체 수량", "data-f": "stock" })),
+    el("div", {}, el("div", { class: "lbl", text: "인당 제한" }),
+      el("input", { type: "number", value: it.perUserLimit ?? "", min: "1", placeholder: "무제한",
+                    title: "한 사람이 가져갈 수 있는 최대 개수", "data-f": "perUserLimit" })),
+    el("button", { class: "sm danger", text: "삭제",
+                   onclick: (e) => e.target.closest(".item-row").remove() }));
+}
+
+function draftBody(p) {
+  const items = el("div", { class: "stack" });
+  (p.items ?? []).forEach((it) => items.append(itemRow(it)));
+  if (!(p.items ?? []).length) items.append(itemRow());
+
+  const postUrl = el("input", {
+    type: "url", placeholder: "https://www.sooplive.com/station/아이디/post/글번호",
+  });
+
+  const readItems = () => [...items.querySelectorAll(".item-row")].map((r) => {
+    const g = (f) => r.querySelector(`[data-f=${f}]`).value.trim();
+    const stock = g("stock");
+    const perUser = g("perUserLimit");
+    const imageId = g("imageId");
+    return {
+      name: g("name"),
+      price: Number(g("price") || 0),
+      stock: stock === "" ? null : Number(stock),
+      perUserLimit: perUser === "" ? null : Number(perUser),
+      imageId: imageId === "" ? null : Number(imageId),
+    };
+  }).filter((x) => x.name);
+
+  const save = async () => {
+    try {
+      await api(`/api/shop/pages/${p.id}/items`, {
+        method: "PUT", body: JSON.stringify({ items: readItems() }),
+      });
+      msg("ok", "보상을 저장했습니다.");
+      loadPages();
+    } catch (e) { msg("bad", e.message); }
+  };
+
+  return el("div", { class: "stack" },
+    el("div", { class: "stack" },
+      el("div", { class: "item-row small muted" },
+        el("span", { text: "사진" }), el("span", { text: "보상 이름" }),
+        el("span", { text: "가격" }), el("span", { text: "총 수량" }),
+        el("span", { text: "인당 제한" }), el("span", {})),
+      items,
+      el("div", { class: "row" },
+        el("button", { class: "sm", text: "+ 보상 추가", onclick: () => items.append(itemRow()) }),
+        el("button", { class: "sm primary", text: "보상 저장", onclick: save }))),
+
+    el("div", { class: "field" },
+      el("span", { class: "label", text: "게시글 주소" }),
+      postUrl,
+      el("span", { class: "hint" },
+        document.createTextNode("자기 방송국에 글을 쓰고 그 주소를 넣어 주세요. 제목은 자유지만, "),
+        el("code", { text: "[달란트 시장]" }),
+        document.createTextNode(" 같은 말머리를 붙이면 시청자가 목록에서 찾기 쉽습니다."))),
+
+    el("div", { class: "row" },
+      el("button", {
+        class: "primary", text: "페이지 열기",
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            await api(`/api/shop/pages/${p.id}/items`, {
+              method: "PUT", body: JSON.stringify({ items: readItems() }),
+            });
+            await api(`/api/shop/pages/${p.id}/open`, {
+              method: "POST", body: JSON.stringify({ postUrl: postUrl.value.trim() }),
+            });
+            msg("ok", "페이지를 열었습니다. 이제 시청자가 댓글로 구매를 신청할 수 있습니다.");
+            loadPages();
+          } catch (err) { msg("bad", err.message); e.target.disabled = false; }
+        },
+      }),
+      el("button", {
+        class: "danger", text: "페이지 삭제",
+        onclick: async () => {
+          if (!confirm(`"${p.title}" 페이지를 삭제할까요?`)) return;
+          try {
+            await api(`/api/shop/pages/${p.id}/delete`, { method: "POST" });
+            selectedPageId = null; // 지워진 페이지를 계속 선택해 둘 수 없다
+            loadPages();
+          } catch (e) { msg("bad", e.message); }
+        },
+      })));
+}
+
+function openBody(p) {
+  return el("div", { class: "stack" },
+    itemTable(p.items),
+    el("p", { class: "small muted", style: "margin:0" },
+      el("a", { href: p.postUrl, target: "_blank", rel: "noopener noreferrer", text: "연결된 게시글 보기 →" })),
+    el("div", { class: "notice warn", style: "margin:0" },
+      "페이지를 닫으면 댓글을 읽어 달란트를 차감합니다. 한 번 닫으면 다시 열 수 없습니다."),
+    el("div", { class: "row" },
+      el("button", {
+        class: "primary", text: "닫고 정산하기",
+        onclick: async (e) => {
+          if (!confirm("페이지를 닫고 구매를 확정합니다. 다시 열 수 없습니다. 계속할까요?")) return;
+          e.target.disabled = true;
+          try {
+            const r = await api(`/api/shop/pages/${p.id}/close`, { method: "POST" });
+            msg("ok", `정산 완료 — 신청 ${r.result.orders}건 중 ${r.result.fulfilled}건 확정, ` +
+                      `${r.result.rejected}건 거절, 총 ${fmtNum(r.result.spent)} 달란트 차감`);
+            loadPages();
+          } catch (err) { msg("bad", err.message); e.target.disabled = false; }
+        },
+      })));
+}
+
+function closedBody(p) {
+  const orders = el("div", { class: "muted small", text: "구매 내역을 불러오는 중…" });
+  const box = el("div", { class: "stack" },
+    el("p", { class: "small muted", style: "margin:0",
+              text: `${fmtDate(p.closedAt)} 에 닫힘` }),
+    itemTable(p.items),
+    el("h3", { style: "margin:6px 0 0", text: "구매 내역" }),
+    orders);
+
+  // 닫힌 페이지에서 보고 싶은 것은 결국 구매 내역이다. 클릭 없이 바로 보여 준다.
+  api(`/api/shop/pages/${p.id}/orders`)
+    .then((list) => orders.replaceWith(orderTable(list)))
+    .catch((err) => orders.textContent = `구매 내역을 불러오지 못했습니다: ${err.message}`);
+
+  return box;
+}
+
+function itemTable(items) {
+  if (!items?.length) return el("p", { class: "muted small", style: "margin:0",
+                                       text: "등록된 보상이 없습니다." });
+  const tb = el("tbody");
+  (items ?? []).forEach((it) => tb.append(el("tr", {},
+    el("td", {}, it.imageId
+      ? el("img", { class: "item-thumb", src: `/api/shop/images/${it.imageId}`, alt: "" })
+      : el("span", { class: "muted small", text: "—" })),
+    el("td", { text: it.name }),
+    el("td", { class: "n", text: fmtNum(it.price) }),
+    el("td", { class: "n", text: it.stock == null ? "무제한" : fmtNum(it.stock) }),
+    el("td", { class: "n", text: it.perUserLimit == null ? "무제한" : fmtNum(it.perUserLimit) }))));
+  return el("div", { class: "table-wrap" },
+    el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", { text: "사진" }),
+        el("th", { text: "보상" }),
+        el("th", { style: "text-align:right", text: "가격" }),
+        el("th", { style: "text-align:right", text: "총 수량" }),
+        el("th", { style: "text-align:right", text: "인당 제한" }))),
+      tb));
+}
+
+function orderTable(orders) {
+  if (!orders.length) return el("div", { class: "empty", text: "구매 신청이 없었습니다." });
+  const tb = el("tbody");
+  for (const o of orders) {
+    const detail = o.status === "fulfilled"
+      ? (o.lines ?? []).map((l) => l.quantity > 1 ? `${l.itemName} x${l.quantity}` : l.itemName).join(", ")
+      : o.rejectReason;
+    tb.append(el("tr", {},
+      el("td", { text: o.nickname ? `${o.nickname} (${o.userId})` : o.userId }),
+      el("td", { text: detail }),
+      el("td", { class: "n " + (o.status === "fulfilled" ? "neg" : ""),
+                 text: o.status === "fulfilled" ? `-${fmtNum(o.totalPrice)}` : "—" }),
+      el("td", {}, el("span", {
+        class: `badge ${o.status === "fulfilled" ? "ok" : "bad"}`,
+        text: o.status === "fulfilled" ? "확정" : "거절" }))));
+  }
+  return el("div", { class: "table-wrap" },
+    el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", { text: "시청자" }), el("th", { text: "내용" }),
+        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }))),
+      tb));
+}
+
+// ── 달란트 기준 ────────────────────────────────────────────────────────
+const FIELD_IDS = [
+  "stay.intervalMinutes","stay.points","stay.graceSeconds",
+  "chat.points","chat.minLength","chat.perMinuteCap","chat.dailyCap",
+  "rank.topPoints","rank.enableWatch","rank.enableChat",
+  "donation.starBalloonRate","donation.adBalloonRate",
+  "subscribe.base","subscribe.perMonth","subscribe.maxMonths",
+  "fanclub.joinPoints","manual.postPoints","manual.commentPoints",
+];
+const getPath = (o, p) => p.split(".").reduce((x, k) => x?.[k], o);
+function setPath(o, p, v) {
+  const ks = p.split("."); const last = ks.pop();
+  ks.reduce((x, k) => (x[k] ??= {}), o)[last] = v;
+}
+function fillRules(r) {
+  for (const id of FIELD_IDS) {
+    const e = $(id); if (!e) continue;
+    const v = getPath(r, id);
+    if (e.type === "checkbox") e.checked = Boolean(v); else e.value = v ?? 0;
+  }
+}
+function readRules() {
+  const r = {};
+  for (const id of FIELD_IDS) {
+    const e = $(id); if (!e) continue;
+    setPath(r, id, e.type === "checkbox" ? e.checked : Number(e.value));
+  }
+  return r;
+}
+async function loadRules() {
+  try { fillRules(await api("/api/rules")); }
+  catch (e) { msg("bad", e.message); }
+}
+$("saveRules").addEventListener("click", async () => {
+  try {
+    fillRules(await api("/api/rules", { method: "PUT", body: JSON.stringify(readRules()) }));
+    msg("ok", "저장했습니다. 지금부터 발생하는 활동에 적용됩니다.");
+  } catch (e) { msg("bad", e.message); }
+});
+$("resetRules").addEventListener("click", async () => {
+  if (!confirm("모든 달란트 기준을 기본값으로 되돌립니다. 계속할까요?")) return;
+  try {
+    fillRules(await api("/api/rules/reset", { method: "POST" }));
+    msg("ok", "기본값으로 되돌렸습니다.");
+  } catch (e) { msg("bad", e.message); }
+});
+
+// ── 시작 ─────────────────────────────────────────────────────────────
+async function start() {
+  try {
+    me = await api("/api/me");
+  } catch { signOut(); return; }
+
+  $("authView").hidden = true;
+  $("meLabel").textContent = me.email || "(이메일 없음)";
+  $("whoami").hidden = false;
+
+  if (!me.approvedBid) {
+    // 승인 전에는 볼 연결 상태가 없다 — 연결 신청부터가 순서다.
+    stopConnPolling();
+    $("connChip").hidden = true;
+    $("mainView").hidden = true;
+    $("claimView").hidden = false;
+    const pending = (me.claims ?? []).find((c) => c.status === "pending");
+    const rejected = (me.claims ?? []).find((c) => c.status === "rejected");
+    const box = $("claimStatus");
+    box.replaceChildren(
+      pending ? el("div", { class: "notice warn", style: "margin:0",
+                            text: `${pending.bid} 승인 대기 중입니다.` })
+      : rejected ? el("div", { class: "notice bad", style: "margin:0",
+                            text: `연결 신청이 거절되었습니다.${rejected.note ? " 사유: " + rejected.note : ""}` })
+      : el("div", { class: "notice warn", style: "margin:0",
+                            text: "아직 연결 신청을 하지 않았습니다." }));
+    return;
+  }
+
+  $("claimView").hidden = true;
+  $("mainView").hidden = false;
+  $("bidBadge").textContent = me.approvedBid;
+  $("bidBadge").hidden = false;
+  loadOverview();
+  loadRecentGrants();
+  loadConn();
+  startConnPolling();
+}
+
+// 소셜 로그인 콜백으로 돌아온 경우 프래그먼트에서 토큰을 꺼낸다.
+(function bootstrap() {
+  const frag = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const t = frag.get("token");
+  const err = frag.get("error");
+  if (t) {
+    token = t;
+    localStorage.setItem(KEY, t);
+    history.replaceState(null, "", location.pathname);
+  } else if (err) {
+    history.replaceState(null, "", location.pathname);
+    setTimeout(() => msg("bad", err), 0);
+  }
+  if (token) start(); else signOut();
+})();
+</script>
+</body>
+</html>

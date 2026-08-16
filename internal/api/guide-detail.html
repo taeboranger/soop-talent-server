@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SoopTalent 자세한 안내</title>
+<style>
+  :root {
+    --bg:#ffffff; --bg-soft:#f4f6fb; --bg-inset:#e8ecf5;
+    --fg:#161a22; --fg-muted:#5b6272; --line:#d6dbe6;
+    --accent:#1a56db; --accent-soft:#e7eefc; --accent-fg:#ffffff;
+    --ok:#1a7f52; --warn:#97620a; --bad:#b3261e;
+    --ok-bg:#e6f4ec; --warn-bg:#fdf3e2; --bad-bg:#fdecea;
+    --ok-line:#b7e0c8;
+    --r:9px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#12151c; --bg-soft:#1a1e28; --bg-inset:#232837;
+      --fg:#e4e8f0; --fg-muted:#949cae; --line:#303648;
+      --accent:#6aa4ff; --accent-soft:#1b2740; --accent-fg:#0b1220;
+      --ok:#63cd97; --warn:#e0ab5a; --bad:#f2837b;
+      --ok-bg:#16281f; --warn-bg:#2e2617; --bad-bg:#2e1d1c;
+      --ok-line:#2c5741;
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14.5px/1.65 "Pretendard","Malgun Gothic","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:800px; margin:0 auto; padding:28px 20px 90px; }
+  a { color:var(--accent); }
+
+  header.top { display:flex; align-items:center; justify-content:space-between;
+               gap:12px; padding-bottom:16px; margin-bottom:22px;
+               border-bottom:1px solid var(--line); }
+  .brand { display:flex; align-items:center; gap:9px; }
+  .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
+          display:grid; place-items:center; }
+  .logo i { display:block; width:13px; height:11px;
+            background:
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 0 100%/3px 5px no-repeat,
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 5px 100%/3px 8px no-repeat,
+              linear-gradient(var(--accent-fg),var(--accent-fg)) 10px 100%/3px 11px no-repeat; }
+  h1 { font-size:19px; margin:0; }
+  .lede { font-size:15.5px; color:var(--fg-muted); margin:0 0 4px; }
+
+  nav.toc { background:var(--bg-soft); border:1px solid var(--line);
+            border-radius:var(--r); padding:14px 18px; margin:22px 0 36px; }
+  nav.toc ol { margin:0; padding-left:20px; }
+  nav.toc li { margin:3px 0; }
+
+  section { margin-bottom:44px; scroll-margin-top:16px; }
+  section > h2 { font-size:19px; margin:0 0 14px;
+                 padding-bottom:7px; border-bottom:2px solid var(--line); }
+  h3 { font-size:15.5px; margin:22px 0 8px; }
+  p { margin:0 0 10px; }
+
+  /* 단계 표시는 실제로 순서가 있는 절차에만 쓴다 */
+  .step { display:grid; grid-template-columns:32px 1fr; gap:14px; margin:22px 0; }
+  .step-num { width:28px; height:28px; border-radius:50%;
+              background:var(--accent); color:var(--accent-fg);
+              display:grid; place-items:center; font-weight:700; font-size:13.5px; }
+  .step h3 { margin:2px 0 8px; }
+
+  figure { margin:16px 0; }
+  figure svg { width:100%; height:auto; display:block;
+               border:1px solid var(--line); border-radius:var(--r);
+               background:var(--bg-soft); }
+  figcaption { margin-top:7px; font-size:12.5px; color:var(--fg-muted); text-align:center; }
+
+  svg .box   { fill:var(--bg);       stroke:var(--line);  stroke-width:1.5; }
+  svg .boxA  { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.5; }
+  svg .label { fill:var(--fg);       font:600 13px sans-serif; }
+  svg .sub   { fill:var(--fg-muted); font:11.5px sans-serif; }
+  svg .arrow { stroke:var(--fg-muted); stroke-width:1.6; fill:none; marker-end:url(#ah); }
+  svg .ahfill{ fill:var(--fg-muted); }
+  svg .btn   { fill:var(--accent); }
+  svg .btntx { fill:var(--accent-fg); font:700 11px sans-serif; }
+  svg .thumb { fill:var(--bg-inset); stroke:var(--line); }
+
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--r); }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th,td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line);
+          vertical-align:top; }
+  th { background:var(--bg-soft); font-size:12px; color:var(--fg-muted); font-weight:600; }
+  tbody tr:last-child td { border-bottom:none; }
+  td.auto { white-space:nowrap; }
+
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px;
+           border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .badge::before { font-weight:700; }
+  .badge.ok{background:var(--ok-bg);color:var(--ok)}      .badge.ok::before{content:"●"}
+  .badge.warn{background:var(--warn-bg);color:var(--warn)}.badge.warn::before{content:"▲"}
+  .badge.bad{background:var(--bad-bg);color:var(--bad)}   .badge.bad::before{content:"■"}
+
+  details { border:1px solid var(--line); border-radius:var(--r);
+            padding:11px 14px; margin:9px 0; background:var(--bg-soft); }
+  summary { cursor:pointer; font-weight:600; }
+  details p { margin:9px 0 0; }
+
+  .callout { border-left:3px solid var(--accent); background:var(--bg-soft);
+             padding:11px 15px; border-radius:0 var(--r) var(--r) 0; margin:16px 0; }
+  .callout.warn { border-left-color:var(--warn); background:var(--warn-bg); color:var(--warn); }
+
+  code { background:var(--bg-inset); padding:1px 5px; border-radius:4px;
+         font-family:"Cascadia Mono",Consolas,monospace; font-size:12.5px; }
+
+  /* 문의 안내 — 제목 바로 아래. 눈에 띄되 본문을 밀어내지 않을 만큼만 */
+  .contact { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+             background:var(--ok-bg); border:1px solid var(--ok-line);
+             border-radius:var(--r); padding:13px 17px; margin:0 0 22px; }
+  .contact .txt { flex:1 1 240px; min-width:0; }
+  .contact b { display:block; color:var(--ok); }
+  .contact span { font-size:13.5px; color:var(--fg-muted); }
+  .contact a { display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;
+               background:#5865F2; color:#fff; text-decoration:none; font-weight:600;
+               font-size:13.5px; padding:8px 14px; border-radius:8px; }
+  .contact a:hover { filter:brightness(1.08); }
+  .contact a svg { width:18px; height:18px; fill:currentColor; flex:0 0 auto; }
+
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="ahfill"/>
+    </marker>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo"><i></i></span>
+    <h1>자세한 안내</h1>
+  </div>
+  <a href="/guide">← 기본 가이드</a>
+</header>
+
+<div class="contact">
+  <div class="txt">
+    <b>스트리머분들의 서비스에 관한 문의나 의견을 환영합니다.</b>
+    <span>디스코드 <strong>@cagea1</strong> 로 편하게 연락 주세요.</span>
+  </div>
+  <a href="https://discord.com/users/cagea1" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.198.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg>
+    디스코드로 문의하기
+  </a>
+</div>
+
+<p class="lede">
+  동작 원리와 세부 규칙을 담은 문서입니다.
+  처음이시라면 <a href="/guide">기본 가이드</a>부터 보세요.
+</p>
+
+<nav class="toc">
+  <strong style="display:block;margin-bottom:6px">목차</strong>
+  <ol>
+    <li><a href="#what">어떻게 동작하나요</a></li>
+    <li><a href="#start">시작하기</a></li>
+    <li><a href="#earn">달란트가 쌓이는 방법</a></li>
+    <li><a href="#board">게시판에서 직접 주기</a></li>
+    <li><a href="#market">달란트 시장 (보상 교환)</a></li>
+    <li><a href="#trouble">문제가 생겼을 때</a></li>
+  </ol>
+</nav>
+
+<!-- ==================================================================== -->
+<section id="what">
+  <h2>1. 어떻게 동작하나요</h2>
+
+  <p>
+    <strong>서버</strong>가 방송 채팅에 직접 접속해 시청자 활동을 실시간으로 기록합니다.
+    <strong>확장 프로그램</strong>은 하루에 한 번 SOOP 통계에서 시청자 랭킹을 가져와 서버로 올립니다.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 250" role="img" aria-labelledby="f1">
+      <title id="f1">서버는 채팅을 직접 수집하고, 확장은 하루 한 번 랭킹을 올린다</title>
+      <rect class="box" x="20" y="30" width="150" height="66" rx="8"/>
+      <text class="label" x="95" y="58" text-anchor="middle">SOOP 방송</text>
+      <text class="sub"   x="95" y="76" text-anchor="middle">채팅 · 후원 · 입퇴장</text>
+
+      <rect class="box" x="20" y="150" width="150" height="66" rx="8"/>
+      <text class="label" x="95" y="178" text-anchor="middle">SOOP 통계</text>
+      <text class="sub"   x="95" y="196" text-anchor="middle">일별 시청자 랭킹</text>
+
+      <rect class="boxA" x="275" y="80" width="150" height="86" rx="8"/>
+      <text class="label" x="350" y="112" text-anchor="middle">서버</text>
+      <text class="sub"   x="350" y="131" text-anchor="middle">항상 켜져 있음</text>
+      <text class="sub"   x="350" y="148" text-anchor="middle">달란트 계산 · 저장</text>
+
+      <rect class="box" x="275" y="188" width="150" height="46" rx="8"/>
+      <text class="label" x="350" y="216" text-anchor="middle">확장 프로그램</text>
+
+      <rect class="box" x="530" y="80" width="150" height="86" rx="8"/>
+      <text class="label" x="605" y="112" text-anchor="middle">시청자 달란트</text>
+      <text class="sub"   x="605" y="131" text-anchor="middle">누가 얼마나</text>
+      <text class="sub"   x="605" y="148" text-anchor="middle">참여했는지</text>
+
+      <path class="arrow" d="M170 63 L235 63 L235 110 L272 110"/>
+      <text class="sub" x="205" y="55" text-anchor="middle">실시간</text>
+      <path class="arrow" d="M170 183 L222 183 L222 211 L272 211"/>
+      <text class="sub" x="196" y="176" text-anchor="middle">하루 1회</text>
+      <path class="arrow" d="M350 186 L350 170"/>
+      <path class="arrow" d="M425 123 L527 123"/>
+    </svg>
+    <figcaption>서버는 채팅에 직접 붙습니다. 확장은 통계 조회와 게시판 버튼을 담당합니다.</figcaption>
+  </figure>
+
+  <div class="callout">
+    <strong>PC를 꺼도 채팅 달란트는 계속 쌓입니다.</strong>
+    채팅 수집은 서버가 하기 때문입니다. 다만 랭킹 가산점은 확장이 담당하므로
+    브라우저를 며칠 켜지 않으면 그동안의 랭킹이 밀립니다.
+    다시 켜면 <strong>최근 7일치를 자동으로 메웁니다.</strong>
+  </div>
+
+  <div class="callout">
+    <strong>달란트는 스트리머별로 따로 쌓입니다.</strong>
+    A 스트리머에게 모은 달란트로 B 스트리머의 보상을 교환할 수 없습니다.
+  </div>
+
+  <div class="callout">
+    <strong>SOOP 비밀번호는 요구하지 않습니다.</strong>
+    이미 브라우저에 로그인된 SOOP 세션을 그대로 사용합니다.
+    SoopTalent 계정(OAuth 로그인)은 SOOP 계정과 별개입니다.
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="start">
+  <h2>2. 시작하기</h2>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div>
+      <h3>OAuth로 로그인합니다</h3>
+      <p>
+        이 사이트에서 화면에 표시되는 Google·네이버·카카오 등 OAuth 로그인 버튼을 누릅니다.
+        사용 가능한 제공자는 서버 설정에 따라 다릅니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div>
+      <h3>확장 프로그램을 설치합니다</h3>
+      <p>
+        <code>chrome://extensions</code> → 우측 상단 <strong>개발자 모드</strong> 켜기 →
+        <strong>압축해제된 확장 프로그램을 로드</strong> → <code>extension</code> 폴더 선택.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div>
+      <h3>SOOP에 스트리머 계정으로 로그인한 뒤 연결을 신청합니다</h3>
+      <p>
+        확장 아이콘을 누르고 로그인한 다음,
+        <strong>이 계정으로 연결 신청</strong>을 누릅니다.
+        확장이 <strong>현재 SOOP에 로그인된 계정</strong>의 아이디로 신청하므로 오타가 날 일이 없습니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div>
+      <h3>운영자 승인을 기다립니다</h3>
+      <p>
+        승인되면 <strong>즉시 채팅 수집이 시작</strong>되고 이 사이트의 모든 기능이 열립니다.
+        기본 달란트 기준이 들어 있어 따로 설정하지 않아도 동작합니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>계정 불일치 경고가 뜬다면</strong> — 브라우저가 승인된 계정과 다른 SOOP 계정으로
+    로그인돼 있다는 뜻입니다. 이 상태로는 랭킹이 올라가지 않습니다.
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="earn">
+  <h2>3. 달란트가 쌓이는 방법</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>활동</th><th class="auto">방식</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td><strong>방송 시청</strong></td><td class="auto"><span class="badge ok">자동</span></td>
+            <td>채팅 참여자 목록에 머무는 동안 일정 시간마다. 기본 10분마다 5달란트입니다.</td></tr>
+        <tr><td><strong>채팅</strong></td><td class="auto"><span class="badge ok">자동</span></td>
+            <td>채팅 한 건마다. 도배로 쌓지 못하도록 분당 인정 건수와 하루 상한이 걸려 있습니다.</td></tr>
+        <tr><td><strong>별별랭킹 시청시간 / 채팅 순위</strong></td>
+            <td class="auto"><span class="badge ok">자동</span></td>
+            <td>전날 순위 상위 100명에게 순위에 따라 가산점을 줍니다.</td></tr>
+        <tr><td><strong>후원</strong></td><td class="auto"><span class="badge ok">자동</span></td>
+            <td>별풍선과 애드벌룬을 개수에 비례해 환산합니다. 환산율을 따로 정할 수 있습니다.</td></tr>
+        <tr><td><strong>팬클럽 가입</strong></td><td class="auto"><span class="badge ok">자동</span></td>
+            <td>가입이 확인되면 최초 한 번 지급합니다.</td></tr>
+        <tr><td><strong>구독</strong></td><td class="auto"><span class="badge ok">자동</span></td>
+            <td>기본 달란트에 구독 개월 수만큼 더해서 지급합니다. 개월 수 상한을 정할 수 있습니다.</td></tr>
+        <tr><td><strong>게시글 · 댓글</strong></td><td class="auto"><span class="badge warn">수동</span></td>
+            <td>방송국 게시판에서 버튼을 눌러 직접 지급합니다.</td></tr>
+        <tr><td><strong>직접 지급</strong></td><td class="auto"><span class="badge warn">수동</span></td>
+            <td>대시보드의 <strong>직접 지급</strong> 탭에서 아이디·금액·사유를 넣어 줍니다. 회수하려면 음수를 넣습니다.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>채팅 연동 켜고 끄기</h3>
+  <p>
+    <strong>대시보드</strong> 탭 맨 위 <strong>연결 상태</strong> 카드에서 채팅 연동을 끌 수 있습니다.
+    끄면 서버가 방송 채팅에서 빠져나오고, <strong>방송 시청·채팅·후원·팬클럽 달란트가 멈춥니다.</strong>
+  </p>
+  <ul>
+    <li>일별 랭킹과 게시판 직접 지급은 확장이 담당하므로 <strong>그대로 동작합니다.</strong></li>
+    <li>이미 쌓인 달란트는 <strong>사라지지 않습니다.</strong> 달란트 시장도 그대로 열립니다.</li>
+    <li>설정은 서버에 저장되어 <strong>서버를 다시 켜도 꺼진 채로 유지됩니다.</strong></li>
+    <li>다시 켜면 방송 중일 때 몇 초 안에 붙습니다. 끈 동안의 활동은 <strong>메워지지 않습니다.</strong></li>
+  </ul>
+
+  <h3>내역 확인</h3>
+  <p>
+    <strong>달란트 내역</strong> 탭에서 누가 언제 왜 받았는지 한 줄씩 볼 수 있습니다.
+    시청자 아이디나 사유로 걸러서 볼 수 있습니다.
+  </p>
+  <div class="table-wrap">
+    <table><tbody>
+      <tr><td style="font-family:Consolas,monospace;font-size:12.5px;white-space:normal">
+        [2026-08-11 01:38:56] 홍길동(user123) +500 달란트 / 이벤트 당첨 보상
+      </td></tr>
+    </tbody></table>
+  </div>
+
+  <details>
+    <summary>달란트 기준을 바꾸면 과거 달란트도 바뀌나요?</summary>
+    <p>아닙니다. 변경한 기준은 <strong>저장 이후에 발생하는 활동부터</strong> 적용됩니다.</p>
+  </details>
+  <details>
+    <summary>같은 사람이 여러 기기로 접속하면 중복으로 쌓이나요?</summary>
+    <p>아닙니다. 동시 접속은 하나의 계정으로 합쳐서 계산합니다.</p>
+  </details>
+  <details>
+    <summary>방송을 안 보고 켜만 둬도 쌓이나요?</summary>
+    <p>쌓입니다. 자리를 비운 시청도 참여로 인정하도록 설계했습니다.
+       부담스러우면 <strong>달란트 기준</strong> 탭에서 지급 주기를 늘리거나 회당 달란트를 낮추면 됩니다.</p>
+  </details>
+</section>
+
+<!-- ==================================================================== -->
+<section id="board">
+  <h2>4. 게시판에서 직접 주기</h2>
+
+  <p>
+    방송국 게시글과 댓글 옆에 버튼이 나타납니다.
+    게시글 버튼은 <strong>추천 버튼 바로 옆</strong>에, 댓글 버튼은 <strong>답글 옆</strong>에 있습니다.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 210" role="img" aria-labelledby="f2">
+      <title id="f2">추천 버튼 옆의 달란트 주기 버튼과 지급 후 나타나는 쪽지 버튼</title>
+      <rect class="box" x="20" y="20" width="660" height="76" rx="8"/>
+      <text class="sub" x="46" y="52">👍 564</text>
+      <rect class="btn" x="110" y="38" width="94" height="26" rx="13"/>
+      <text class="btntx" x="157" y="55" text-anchor="middle">달란트 주기</text>
+      <text class="sub" x="640" y="52" text-anchor="end">↗ 공유</text>
+
+      <rect class="box" x="20" y="112" width="660" height="76" rx="8"/>
+      <text class="sub" x="46" y="144">👍 564</text>
+      <rect class="box" x="110" y="130" width="88" height="26" rx="13"
+            style="fill:var(--ok-bg);stroke:var(--ok)"/>
+      <text x="154" y="147" text-anchor="middle"
+            style="fill:var(--ok);font:600 11px sans-serif">+50</text>
+      <rect class="btn" x="206" y="130" width="54" height="26" rx="13"/>
+      <text class="btntx" x="233" y="147" text-anchor="middle">쪽지</text>
+      <text class="sub" x="640" y="144" text-anchor="end">↗ 공유</text>
+    </svg>
+    <figcaption>지급하면 버튼이 “+50”으로 바뀌고 그 옆에 쪽지 버튼이 나타납니다.</figcaption>
+  </figure>
+
+  <h3>쪽지 보내기</h3>
+  <p>
+    달란트를 준 뒤 <strong>쪽지</strong> 버튼을 누르면 그 시청자에게 스트리머 본인 계정으로 쪽지를 보낼 수 있습니다.
+    문구가 미리 채워지지만 <strong>보내기 전에 확인하고 고칠 수 있습니다.</strong>
+  </p>
+
+  <div class="callout warn">
+    <strong>쪽지는 자동으로 나가지 않습니다.</strong>
+    버튼을 누를 때만 한 통씩 보냅니다.
+    지급할 때마다 자동 발송하면 받는 분의 쪽지함이 차고,
+    대량 발송은 스팸으로 판정돼 <strong>스트리머 계정이 제재될 수 있습니다.</strong>
+  </div>
+
+  <div class="callout">
+    <strong>같은 글에 두 번 줄 수 없습니다.</strong>
+    실수로 여러 번 눌러도 한 번만 지급됩니다.
+    지급 내역에는 어떤 글·댓글이었는지 <strong>링크가 함께 기록</strong>됩니다.
+  </div>
+
+  <details>
+    <summary>댓글 버튼은 다른 방송국에서도 쓸 수 있나요?</summary>
+    <p>네. 댓글 달란트는 어느 방송국의 글이든 줄 수 있습니다.
+       게시글 버튼은 본인 방송국에서만 나타납니다.</p>
+  </details>
+</section>
+
+<!-- ==================================================================== -->
+<section id="market">
+  <h2>5. 달란트 시장 (보상 교환)</h2>
+
+  <p>
+    보상을 걸어 두면 시청자가 모은 달란트로 신청합니다.
+    <strong>달란트 시장</strong> 탭에서 관리합니다.
+  </p>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div>
+      <h3>보상 페이지를 만들고 보상을 등록합니다</h3>
+      <p>
+        보상마다 <strong>이름 · 가격 · 총 수량 · 인당 제한 · 미리보기 사진</strong>을 넣습니다.
+        사진은 사각형 칸을 눌러 올립니다 (PNG·JPEG·GIF·WebP, 2MB 이하).
+      </p>
+      <div class="table-wrap" style="margin:12px 0">
+        <table>
+          <thead><tr><th>항목</th><th>비우면</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><strong>총 수량</strong></td><td class="auto">무제한</td>
+                <td>이 페이지에서 풀리는 전체 개수입니다. 선착순으로 소진됩니다.</td></tr>
+            <tr><td><strong>인당 제한</strong></td><td class="auto">무제한</td>
+                <td>한 사람이 가져갈 수 있는 최대 개수입니다.
+                    총 수량이 남아 있어도 한 명이 독식하지 못하게 막습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        둘 다 걸면 <strong>더 빡빡한 쪽이 먼저 걸립니다.</strong>
+        예를 들어 총 수량 10개 · 인당 2개면, 최대 5명이 2개씩 가져갑니다.
+      </p>
+      <figure>
+        <svg viewBox="0 0 700 150" role="img" aria-labelledby="f3">
+          <title id="f3">보상 등록 화면 — 사진, 이름, 가격, 수량</title>
+          <rect class="box" x="20" y="20" width="660" height="110" rx="8"/>
+          <text class="sub" x="44" y="42">사진</text>
+          <text class="sub" x="120" y="42">보상 이름</text>
+          <text class="sub" x="392" y="42">가격</text>
+          <text class="sub" x="474" y="42">총 수량</text>
+          <text class="sub" x="562" y="42">인당 제한</text>
+
+          <rect class="thumb" x="44" y="54" width="56" height="56" rx="7" stroke-dasharray="4 3"/>
+          <text class="sub" x="72" y="80" text-anchor="middle" style="font-size:10px">사진</text>
+          <text class="sub" x="72" y="92" text-anchor="middle" style="font-size:10px">추가</text>
+
+          <rect class="box" x="120" y="68" width="260" height="30" rx="6"/>
+          <text class="sub" x="134" y="88">치킨 기프티콘</text>
+          <rect class="box" x="392" y="68" width="72" height="30" rx="6"/>
+          <text class="sub" x="404" y="88">300</text>
+          <rect class="box" x="474" y="68" width="76" height="30" rx="6"/>
+          <text class="sub" x="486" y="88">10</text>
+          <rect class="box" x="562" y="68" width="70" height="30" rx="6"/>
+          <text class="sub" x="574" y="88">2</text>
+          <text class="sub" x="652" y="88" style="fill:var(--bad)">삭제</text>
+        </svg>
+        <figcaption>여러 페이지를 만들 수 있지만 <strong>동시에 열 수 있는 건 하나</strong>입니다.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div>
+      <h3>방송국에 글을 쓰고 주소를 등록합니다</h3>
+      <p>
+        자기 방송국에 글을 쓰고 그 주소를 넣은 뒤 <strong>페이지 열기</strong>를 누릅니다.
+        제목은 자유입니다 — <strong>게시글 소유자가 본인인지를 서버가 SOOP에 직접 확인</strong>하는 것이
+        실제 검증이며, 제목 검사는 하지 않습니다.
+      </p>
+      <p>
+        시청자용 확장은 <code>GET /api/viewer/markets?bid=…</code> 로 받은
+        <strong>열린 시장 글 번호</strong>를 60초간 캐시해 두고 번호만 대조합니다.
+        시장이 아닌 글에서는 요청이 전혀 나가지 않습니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div>
+      <h3>시청자가 댓글로 신청합니다</h3>
+      <p>
+        시청자가 <strong>시청자용 확장</strong>을 설치했다면, 그 글에서 댓글 등록 버튼 옆에
+        <strong>구매</strong> 버튼이 나타납니다. 보상과 수량을 고르면 신청 문구가 댓글창에 채워집니다.
+        확장이 없어도 <code>[구매신청] 보상이름 x2</code> 형식으로 직접 쓰면 똑같이 처리됩니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div>
+      <h3>페이지를 닫으면 정산됩니다</h3>
+      <p>
+        <strong>닫고 정산하기</strong>를 누르면 서버가 댓글을 읽어 달란트를 차감합니다.
+        결과는 그 페이지의 <strong>구매 내역</strong>에서 볼 수 있습니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>한 번 닫으면 다시 열 수 없습니다.</strong>
+    정산은 <strong>댓글 시각 순 선착순</strong>이며,
+    달란트·총 수량·인당 제한 중 하나라도 모자라면 그 신청은 거절됩니다.
+  </div>
+
+  <div class="callout">
+    <strong>차감의 근거는 실제 댓글입니다.</strong>
+    확장이 보낸 값은 쓰지 않고 서버가 SOOP 댓글을 직접 읽으므로,
+    시청자가 확장을 고쳐도 달란트를 더 쓸 수 없습니다.
+  </div>
+
+  <details>
+    <summary>시청자는 무엇을 설치해야 하나요?</summary>
+    <p><strong>시청자용 확장</strong>을 설치하면 됩니다. SoopTalent 서비스에 자동으로 연결되며,
+       스트리머용 확장과는 다른 것입니다.</p>
+  </details>
+  <details>
+    <summary>보상 이름을 시청자가 조금 다르게 쓰면요?</summary>
+    <p>띄어쓰기와 대소문자는 무시하고 대조합니다.
+       다만 쉼표는 보상을 구분하는 기호라 이름에 넣을 수 없습니다.</p>
+  </details>
+</section>
+
+<!-- ==================================================================== -->
+<section id="trouble">
+  <h2>6. 문제가 생겼을 때</h2>
+
+  <details>
+    <summary>승인 대기 상태가 계속됩니다</summary>
+    <p>운영자가 직접 확인하고 승인하는 방식이라 시간이 걸릴 수 있습니다.
+       승인되면 자동으로 인식하므로 다시 신청할 필요는 없습니다.</p>
+  </details>
+  <details>
+    <summary>“SOOP 로그인 계정이 승인된 스트리머와 다릅니다”</summary>
+    <p>브라우저가 다른 SOOP 계정으로 로그인돼 있습니다.
+       잘못된 데이터가 올라가지 않도록 업로드를 <strong>일부러 중단한 상태</strong>입니다.
+       스트리머 계정으로 로그인한 뒤 확장에서 <strong>지금 동기화</strong>를 누르세요.</p>
+  </details>
+  <details>
+    <summary>랭킹 달란트가 며칠째 들어오지 않습니다</summary>
+    <p>SOOP 통계는 전날 데이터를 <strong>새벽 6시경에 확정</strong>합니다.
+       오늘 방송분은 내일 반영됩니다. 그보다 오래 밀렸다면 대부분 로그인 문제입니다.</p>
+  </details>
+  <details>
+    <summary>채팅 달란트는 쌓이는데 랭킹만 안 들어옵니다</summary>
+    <p>채팅은 서버가, 랭킹은 확장이 담당합니다.
+       <strong>확장 쪽만 문제가 있다</strong>는 뜻이므로 SOOP 로그인 상태와 확장 프로그램 상태를 확인하세요.</p>
+  </details>
+  <details>
+    <summary>달란트가 전혀 쌓이지 않습니다</summary>
+    <p><strong>대시보드</strong> 탭 맨 위 <strong>연결 상태</strong> 카드를 먼저 보세요.
+       어디가 끊겼는지 한 줄로 나옵니다. 확장 팝업에서도 같은 내용을 볼 수 있습니다.</p>
+    <ul>
+      <li><strong>채팅 연동이 꺼짐</strong> — 직접 끈 상태입니다. 옆의 <strong>켜기</strong>를 누르세요.</li>
+      <li><strong>방송 대기</strong> — 방송이 꺼져 있습니다. 고장이 아닙니다.</li>
+      <li><strong>재접속 중</strong> — 연결이 끊겨 다시 붙는 중입니다. 보통 몇 초면 돌아옵니다.
+          계속 이 상태라면 카드 아래의 <strong>마지막 오류</strong> 문구를 확인하세요.</li>
+      <li><strong>서버 응답 없음</strong> — 서버나 데이터베이스가 꺼져 있습니다.</li>
+    </ul>
+  </details>
+  <details>
+    <summary>게시판에 버튼이 보이지 않습니다</summary>
+    <p>로그인과 승인이 끝나야 나타납니다.
+       SOOP이 페이지 구조를 바꾸면 일시적으로 안 보일 수 있는데,
+       그 경우에도 <strong>엉뚱한 사람에게 달란트가 가지는 않습니다.</strong></p>
+  </details>
+  <details>
+    <summary>쪽지가 보내지지 않습니다</summary>
+    <p>상대가 쪽지 수신을 거부했거나, 짧은 시간에 너무 많이 보내 제한에 걸렸을 수 있습니다.
+       잠시 후 다시 시도해 주세요.</p>
+  </details>
+</section>
+
+<footer style="border-top:1px solid var(--line);padding-top:16px;
+               color:var(--fg-muted);font-size:12.5px">
+  SoopTalent은 SOOP의 공식 서비스가 아닙니다.
+</footer>
+
+</div>
+</body>
+</html>

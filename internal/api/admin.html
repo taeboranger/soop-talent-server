@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SoopTalent 관리자</title>
+<style>
+  :root {
+    --bg:#ffffff; --bg-soft:#f4f6fb; --bg-inset:#e8ecf5;
+    --fg:#161a22; --fg-muted:#5b6272; --line:#d6dbe6;
+    --accent:#1a56db; --accent-fg:#ffffff;
+    --ok:#1a7f52; --warn:#97620a; --bad:#b3261e;
+    --ok-bg:#e6f4ec; --warn-bg:#fdf3e2; --bad-bg:#fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#12151c; --bg-soft:#1a1e28; --bg-inset:#232837;
+      --fg:#e4e8f0; --fg-muted:#949cae; --line:#303648;
+      --accent:#6aa4ff; --accent-fg:#0b1220;
+      --ok:#63cd97; --warn:#e0ab5a; --bad:#f2837b;
+      --ok-bg:#16281f; --warn-bg:#2e2617; --bad-bg:#2e1d1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 "Pretendard","Malgun Gothic","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .between { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  header { margin-bottom:22px; }
+
+  input, button, select { font:inherit; }
+  input[type=email], input[type=password], input[type=text] {
+    padding:8px 10px; border:1px solid var(--line); border-radius:6px;
+    background:var(--bg); color:var(--fg); width:100%;
+  }
+  button { padding:7px 13px; border:1px solid var(--line); border-radius:6px;
+           background:var(--bg); color:var(--fg); cursor:pointer; }
+  button:hover:not(:disabled) { background:var(--bg-inset); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent);
+                   color:var(--accent-fg); font-weight:600; }
+  button.reject  { color:var(--bad); border-color:var(--bad); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .card { background:var(--bg-soft); border:1px solid var(--line);
+          border-radius:8px; padding:16px; }
+  .notice { border-radius:6px; padding:9px 12px; margin:12px 0; font-size:13px; }
+  .notice.ok{background:var(--ok-bg);color:var(--ok)}
+  .notice.bad{background:var(--bad-bg);color:var(--bad)}
+  .notice:empty { display:none; }
+
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px;
+           border-radius:999px; font-size:12px; font-weight:600; }
+  .badge::before { font-weight:700; }
+  .badge.pending  { background:var(--warn-bg); color:var(--warn); }
+  .badge.pending::before  { content:"▲"; }
+  .badge.approved { background:var(--ok-bg);  color:var(--ok); }
+  .badge.approved::before { content:"●"; }
+  .badge.rejected { background:var(--bad-bg); color:var(--bad); }
+  .badge.rejected::before { content:"■"; }
+
+  .claim { border:1px solid var(--line); border-radius:8px; padding:14px;
+           margin-bottom:10px; background:var(--bg-soft); }
+  .claim.pending { border-left:3px solid var(--warn); }
+  .claim h3 { margin:0 0 4px; font-size:15px; }
+  .meta { color:var(--fg-muted); font-size:12.5px; }
+  .mono { font-family:"Cascadia Mono",Consolas,monospace; }
+  .actions { display:flex; gap:8px; margin-top:12px; align-items:center; }
+  .actions input { flex:1; }
+  .tabs { display:flex; gap:6px; margin:18px 0 14px; }
+  .tabs button[aria-selected=true] { background:var(--accent);
+      border-color:var(--accent); color:var(--accent-fg); font-weight:600; }
+  .empty { color:var(--fg-muted); padding:28px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="between">
+    <h1>SoopTalent 관리자</h1>
+    <div class="row" id="whoami" hidden>
+      <span class="meta" id="adminEmail"></span>
+      <button id="logout">로그아웃</button>
+    </div>
+  </header>
+
+  <div id="message" class="notice"></div>
+
+  <!-- 로그인 -->
+  <section id="loginView" hidden>
+    <div class="card" style="max-width:380px">
+      <h2 style="margin:0 0 12px;font-size:16px">관리자 로그인</h2>
+      <div id="socialBox" style="display:flex;flex-direction:column;gap:10px"></div>
+      <p class="meta" id="socialHelp" hidden>로그인 제공자를 설정 중입니다. 잠시 후 다시 시도해 주세요.</p>
+    </div>
+  </section>
+
+  <!-- 신청 목록 -->
+  <section id="listView" hidden>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-status="pending"  aria-selected="true">대기 중</button>
+      <button role="tab" data-status="approved" aria-selected="false">승인됨</button>
+      <button role="tab" data-status="rejected" aria-selected="false">거절됨</button>
+      <button role="tab" data-status=""         aria-selected="false">전체</button>
+    </div>
+    <div id="claims"></div>
+  </section>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY = "sooptalent.admin.token";
+let token = localStorage.getItem(KEY) || "";
+let status = "pending";
+
+function msg(kind, text) {
+  const el = $("message");
+  el.className = text ? `notice ${kind}` : "notice";
+  el.textContent = text || "";
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) { signOut(); throw new Error("로그인이 필요합니다."); }
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error || `요청 실패 (HTTP ${res.status})`);
+  return body;
+}
+
+function signOut() {
+  token = "";
+  localStorage.removeItem(KEY);
+  $("loginView").hidden = false;
+  $("listView").hidden = true;
+  $("whoami").hidden = true;
+}
+
+async function loadProviders() {
+  const box = $("socialBox");
+  box.replaceChildren();
+  $("socialHelp").hidden = true;
+  try {
+    const list = await fetch("/api/oauth/providers").then((r) => r.json());
+    if (!list?.length) { $("socialHelp").hidden = false; return; }
+    for (const p of list) {
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = `${p.label}로 계속하기`;
+      btn.addEventListener("click", () => {
+        const back = location.origin + "/admin";
+        location.href = `/api/oauth/${p.id}/start?redirect_uri=${encodeURIComponent(back)}`;
+      });
+      box.append(btn);
+    }
+  } catch { $("socialHelp").hidden = false; }
+}
+
+$("logout").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch {}
+  signOut();
+});
+
+document.querySelectorAll(".tabs button").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button")
+      .forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+    status = b.dataset.status;
+    load();
+  });
+});
+
+function fmtDate(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  return d.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function render(claims) {
+  const box = $("claims");
+  box.replaceChildren();
+
+  if (!claims || claims.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = status === "pending" ? "대기 중인 신청이 없습니다." : "표시할 신청이 없습니다.";
+    box.appendChild(p);
+    return;
+  }
+
+  for (const c of claims) {
+    const el = document.createElement("div");
+    el.className = `claim ${c.status}`;
+
+    const head = document.createElement("div");
+    head.className = "between";
+    const left = document.createElement("div");
+
+    const h = document.createElement("h3");
+    h.textContent = c.soopNick ? `${c.soopNick} (${c.bid})` : c.bid;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${c.email} · 신청 ${fmtDate(c.requestedAt)}` +
+      (c.decidedAt ? ` · 처리 ${fmtDate(c.decidedAt)}` : "");
+    left.append(h, meta);
+
+    const badge = document.createElement("span");
+    badge.className = `badge ${c.status}`;
+    badge.textContent = { pending: "대기 중", approved: "승인됨", rejected: "거절됨" }[c.status];
+
+    head.append(left, badge);
+    el.appendChild(head);
+
+    if (c.note) {
+      const n = document.createElement("div");
+      n.className = "meta";
+      n.style.marginTop = "6px";
+      n.textContent = `메모: ${c.note}`;
+      el.appendChild(n);
+    }
+
+    // 방송국을 직접 확인할 수 있는 링크 — 승인 판단의 근거가 된다
+    const link = document.createElement("div");
+    link.style.marginTop = "6px";
+    const a = document.createElement("a");
+    a.href = `https://www.sooplive.com/station/${encodeURIComponent(c.bid)}`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = "방송국 확인 →";
+    a.style.color = "var(--accent)";
+    a.style.fontSize = "12.5px";
+    link.appendChild(a);
+    el.appendChild(link);
+
+    if (c.status !== "approved") {
+      const act = document.createElement("div");
+      act.className = "actions";
+      const note = document.createElement("input");
+      note.type = "text";
+      note.placeholder = "메모 (선택)";
+
+      const ok = document.createElement("button");
+      ok.className = "primary";
+      ok.textContent = "승인";
+      ok.addEventListener("click", () => decide(c.id, true, note.value, ok));
+
+      const no = document.createElement("button");
+      no.className = "reject";
+      no.textContent = "거절";
+      no.addEventListener("click", () => decide(c.id, false, note.value, no));
+
+      act.append(note, ok, no);
+      el.appendChild(act);
+    } else {
+      const act = document.createElement("div");
+      act.className = "actions";
+      const rev = document.createElement("button");
+      rev.className = "reject";
+      rev.textContent = "승인 철회";
+      rev.addEventListener("click", () => {
+        if (confirm(`${c.bid} 승인을 철회하면 수집이 중단됩니다. 계속할까요?`)) {
+          decide(c.id, false, "승인 철회", rev);
+        }
+      });
+      act.appendChild(rev);
+      el.appendChild(act);
+    }
+
+    box.appendChild(el);
+  }
+}
+
+async function decide(id, approve, note, btn) {
+  btn.disabled = true;
+  msg(null);
+  try {
+    const c = await api(`/api/admin/claims/${id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ approve, note }),
+    });
+    msg("ok", `${c.bid} — ${approve ? "승인했습니다. 수집이 시작됩니다." : "거절했습니다."}`);
+    await load();
+  } catch (e) {
+    msg("bad", e.message);
+    btn.disabled = false;
+  }
+}
+
+async function load() {
+  try {
+    render(await api(`/api/admin/claims?status=${encodeURIComponent(status)}`));
+  } catch (e) {
+    msg("bad", e.message);
+  }
+}
+
+async function start() {
+  try {
+    const me = await api("/api/me");
+    if (!me.isAdmin) { msg("bad", "관리자 계정이 아닙니다."); signOut(); return; }
+    $("adminEmail").textContent = me.email;
+    $("whoami").hidden = false;
+    $("loginView").hidden = true;
+    $("listView").hidden = false;
+    msg(null);
+    await load();
+  } catch {
+    signOut();
+  }
+}
+
+(function bootstrap() {
+  const frag = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const newToken = frag.get("token");
+  const err = frag.get("error");
+  if (newToken) {
+    token = newToken;
+    localStorage.setItem(KEY, token);
+    history.replaceState(null, "", location.pathname);
+  }
+  if (err) msg("bad", err);
+  if (token) start(); else { signOut(); loadProviders(); }
+})();
+</script>
+</body>
+</html>

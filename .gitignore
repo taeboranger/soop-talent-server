@@ -1,0 +1,17 @@
+# 시크릿
+.env
+*.env
+!.env.example
+
+# 빌드 산출물
+bin/
+node_modules/
+
+# 실행 로그 — 시청자 아이디가 남는다
+*.log
+*.log.err
+
+# 채팅 탐침 결과 — 실제 시청자 발언이 그대로 들어 있다
+probe-out/
+
+# docs/는 tools/build-docs.mjs가 만들지만 GitHub Pages가 배포하므로 커밋한다.

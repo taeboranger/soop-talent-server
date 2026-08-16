@@ -1,0 +1,104 @@
+name: Build and publish production image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 이미지 태그는 Git SHA로 고정한다. 이전 태그로 되돌리면 즉시 롤백할 수 있다.
+concurrency:
+  group: sooptalent-production-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: lightstone1/soop-talent-server
+
+jobs:
+  build:
+    name: Test, build, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - uses: docker/setup-buildx-action@v3
+
+      # PR은 이미지를 빌드해 Dockerfile을 검증하지만, 외부 레지스트리나
+      # GitOps 저장소에는 어떤 변경도 만들지 않는다.
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: app
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 다른 저장소(config)를 수정하므로 기본 GITHUB_TOKEN 대신 그 저장소에만
+      # Contents Read/Write 권한이 있는 fine-grained 토큰을 쓴다.
+      - name: Check GitOps configuration
+        if: github.event_name != 'pull_request'
+        run: |
+          test -n "${{ secrets.CONFIG_REPOSITORY }}" || {
+            echo "CONFIG_REPOSITORY secret is required" >&2
+            exit 1
+          }
+          test -n "${{ secrets.CONFIG_REPOSITORY_TOKEN }}" || {
+            echo "CONFIG_REPOSITORY_TOKEN secret is required" >&2
+            exit 1
+          }
+
+      - name: Check out GitOps configuration
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.CONFIG_REPOSITORY }}
+          token: ${{ secrets.CONFIG_REPOSITORY_TOKEN }}
+          path: gitops
+
+      - name: Set up Kustomize
+        if: github.event_name != 'pull_request'
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Update production image tag
+        if: github.event_name != 'pull_request'
+        working-directory: gitops/SoopTalent/overlays/prod/sooptalent
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          kustomize edit set image \
+            lightstone1/soop-talent-server=lightstone1/soop-talent-server:$IMAGE_TAG
+          if git diff --quiet; then
+            echo "GitOps image is already $IMAGE_TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kustomization.yaml
+          git commit -m "deploy(sooptalent): $IMAGE_TAG"
+          git push
