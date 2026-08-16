@@ -86,7 +86,9 @@ jobs:
 
       - name: Update production image tag
         if: github.event_name != 'pull_request'
-        working-directory: gitops/SoopTalent/overlays/prod/sooptalent
+        # CONFIG_REPOSITORY의 루트가 곧 SoopTalent 디렉터리다.
+        # 따라서 체크아웃 뒤에 SoopTalent을 한 번 더 붙이지 않는다.
+        working-directory: gitops/overlays/prod/sooptalent
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
