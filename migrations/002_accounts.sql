@@ -1,5 +1,5 @@
 -- OAuth 전용 계정 / 세션 / 스트리머 연결 신청
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     email VARCHAR(320) NULL,
     password_hash TEXT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE accounts (
     UNIQUE KEY accounts_email_uniq (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     token_hash CHAR(64) PRIMARY KEY,
     account_id BIGINT NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -22,7 +22,7 @@ CREATE TABLE sessions (
     INDEX sessions_expires_idx (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE streamer_claims (
+CREATE TABLE IF NOT EXISTS streamer_claims (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     account_id BIGINT NOT NULL,
     bid VARCHAR(255) NOT NULL,

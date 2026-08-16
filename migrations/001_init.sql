@@ -1,12 +1,12 @@
 -- MySQL 8 초기 스키마. DB 자체는 utf8mb4로 생성한다.
-CREATE TABLE streamers (
+CREATE TABLE IF NOT EXISTS streamers (
     bid VARCHAR(255) PRIMARY KEY,
     nickname VARCHAR(255),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE broadcasts (
+CREATE TABLE IF NOT EXISTS broadcasts (
     broad_no BIGINT PRIMARY KEY,
     bid VARCHAR(255) NOT NULL,
     title TEXT,
@@ -16,7 +16,7 @@ CREATE TABLE broadcasts (
     INDEX broadcasts_bid_started_idx (bid, started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     bid VARCHAR(255) NOT NULL,
     user_id VARCHAR(255) NOT NULL,
     nickname VARCHAR(255),
@@ -27,7 +27,7 @@ CREATE TABLE users (
     CONSTRAINT users_bid_fk FOREIGN KEY (bid) REFERENCES streamers(bid) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE raw_chat_events (
+CREATE TABLE IF NOT EXISTS raw_chat_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     bid VARCHAR(255) NOT NULL,
     broad_no BIGINT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE raw_chat_events (
     INDEX raw_bid_recv_idx (bid, recv_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE point_events (
+CREATE TABLE IF NOT EXISTS point_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     bid VARCHAR(255) NOT NULL,
     user_id VARCHAR(255) NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE point_events (
     INDEX pe_kind_time_idx (bid, kind, occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE presence (
+CREATE TABLE IF NOT EXISTS presence (
     bid VARCHAR(255) NOT NULL,
     broad_no BIGINT NOT NULL,
     user_id VARCHAR(255) NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE presence (
     PRIMARY KEY (bid, broad_no, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE scoring_rules (
+CREATE TABLE IF NOT EXISTS scoring_rules (
     bid VARCHAR(255) NOT NULL,
     `key` VARCHAR(128) NOT NULL,
     value JSON NOT NULL,

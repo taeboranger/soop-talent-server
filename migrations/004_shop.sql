@@ -1,6 +1,6 @@
-ALTER TABLE point_events ADD COLUMN reason TEXT NULL;
+ALTER TABLE point_events ADD COLUMN IF NOT EXISTS reason TEXT NULL;
 
-CREATE TABLE shop_pages (
+CREATE TABLE IF NOT EXISTS shop_pages (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     bid VARCHAR(255) NOT NULL,
     title VARCHAR(255) NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE shop_pages (
     INDEX shop_pages_bid_idx (bid, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE shop_items (
+CREATE TABLE IF NOT EXISTS shop_items (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     page_id BIGINT NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE shop_items (
     UNIQUE KEY shop_items_page_name_uniq (page_id, name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE purchase_orders (
+CREATE TABLE IF NOT EXISTS purchase_orders (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     page_id BIGINT NOT NULL,
     bid VARCHAR(255) NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE purchase_orders (
     INDEX purchase_orders_user_idx (bid, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE purchase_lines (
+CREATE TABLE IF NOT EXISTS purchase_lines (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     order_id BIGINT NOT NULL,
     item_id BIGINT NULL,

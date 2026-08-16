@@ -1,4 +1,4 @@
-CREATE TABLE oauth_identities (
+CREATE TABLE IF NOT EXISTS oauth_identities (
     provider VARCHAR(32) NOT NULL,
     provider_user_id VARCHAR(255) NOT NULL,
     account_id BIGINT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE oauth_identities (
     INDEX oauth_identities_account_idx (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE oauth_states (
+CREATE TABLE IF NOT EXISTS oauth_states (
     state CHAR(48) PRIMARY KEY,
     provider VARCHAR(32) NOT NULL,
     redirect_uri TEXT NOT NULL,
