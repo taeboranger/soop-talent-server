@@ -1177,7 +1177,9 @@ async function start() {
     history.replaceState(null, "", location.pathname);
     setTimeout(() => msg("bad", err), 0);
   }
-  if (token) start(); else signOut();
+  // 새 OAuth 로그인은 HttpOnly 쿠키만 설정한다. 기존 localStorage 토큰도
+  // 호환용으로 유지하되, 토큰이 없어도 쿠키 세션을 먼저 확인한다.
+  start();
 })();
 </script>
 </body>

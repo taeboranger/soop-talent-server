@@ -145,6 +145,18 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     INDEX oauth_states_expires_idx (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 웹 로그인 상태를 확장으로 안전하게 넘길 때 쓰는 1회용 코드.
+-- 코드 원문은 저장하지 않고 SHA-256만 저장한다.
+CREATE TABLE IF NOT EXISTS extension_login_codes (
+    code_hash CHAR(64) NOT NULL,
+    account_id BIGINT NOT NULL,
+    redirect_uri VARCHAR(1024) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (code_hash),
+    INDEX extension_login_codes_expires_idx (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS shop_pages (
     id BIGINT NOT NULL AUTO_INCREMENT,
     bid VARCHAR(255) NOT NULL,

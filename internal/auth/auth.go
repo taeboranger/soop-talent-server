@@ -25,11 +25,12 @@ import (
 )
 
 var (
-	ErrBadCredentials = apperr.New("이메일 또는 비밀번호가 올바르지 않습니다")
-	ErrEmailTaken     = apperr.New("이미 가입된 이메일입니다")
-	ErrWeakPassword   = apperr.New("비밀번호는 8자 이상이어야 합니다")
-	ErrNoSession      = errors.New("로그인이 필요합니다")
-	ErrDisabled       = errors.New("사용이 중지된 계정입니다")
+	ErrBadCredentials   = apperr.New("이메일 또는 비밀번호가 올바르지 않습니다")
+	ErrEmailTaken       = apperr.New("이미 가입된 이메일입니다")
+	ErrWeakPassword     = apperr.New("비밀번호는 8자 이상이어야 합니다")
+	ErrNoSession        = errors.New("로그인이 필요합니다")
+	ErrDisabled         = errors.New("사용이 중지된 계정입니다")
+	ErrBadExtensionCode = apperr.New("확장 로그인 코드가 만료되었거나 올바르지 않습니다")
 )
 
 const (
@@ -205,6 +206,126 @@ func issueSession(ctx context.Context, pool *store.DB, accountID int64, ua strin
 	return token, nil
 }
 
+// IssueSession은 OAuth 콜백과 확장 세션 코드 교환이 같은 방식으로 세션을
+// 발급하게 하는 공개 진입점이다.
+func IssueSession(ctx context.Context, pool *store.DB, accountID int64, ua string) (string, error) {
+	return issueSession(ctx, pool, accountID, ua)
+}
+
+const extensionCodeTTL = time.Minute
+
+// ExtensionOAuthRequest는 OAuth 제공자 왕복 전에 저장한 확장 PKCE 정보다.
+type ExtensionOAuthRequest struct {
+	CodeChallenge string
+	ClientState   string
+}
+
+// NewExtensionOAuthRequest는 OAuth state와 확장이 만든 PKCE 정보를 묶는다.
+func NewExtensionOAuthRequest(ctx context.Context, pool *store.DB, oauthState, codeChallenge, clientState string) error {
+	_, err := pool.Exec(ctx, `
+		INSERT INTO extension_oauth_requests (oauth_state_hash, code_challenge, client_state, expires_at)
+		VALUES ($1, $2, $3, DATE_ADD(NOW(6), INTERVAL $4 SECOND))`,
+		hashToken(oauthState), codeChallenge, clientState, int(stateTTL.Seconds()))
+	return err
+}
+
+// ConsumeExtensionOAuthRequest는 OAuth state에 딸린 PKCE 정보를 한 번만 꺼낸다.
+func ConsumeExtensionOAuthRequest(ctx context.Context, pool *store.DB, oauthState string) (*ExtensionOAuthRequest, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var req ExtensionOAuthRequest
+	err = tx.QueryRow(ctx, `
+		SELECT code_challenge, client_state
+		  FROM extension_oauth_requests
+		 WHERE oauth_state_hash = $1 AND expires_at > NOW(6)
+		 FOR UPDATE`, hashToken(oauthState)).Scan(&req.CodeChallenge, &req.ClientState)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrBadExtensionCode
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM extension_oauth_requests WHERE oauth_state_hash = $1`, hashToken(oauthState)); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
+// NewExtensionCode는 웹의 HttpOnly 세션을 확장 세션으로 바꾸기 위한 1회용
+// 코드를 만든다. 원문은 리다이렉트 프래그먼트로만 전달하고 DB에는 해시만 남긴다.
+// 코드만 탈취해도 교환할 수 없도록 확장이 만든 PKCE challenge를 함께 묶는다.
+func NewExtensionCode(ctx context.Context, pool *store.DB, accountID int64, redirectURI, codeChallenge, clientState string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	code := hex.EncodeToString(raw)
+	_, err := pool.Exec(ctx, `
+		INSERT INTO extension_login_codes_v2
+		       (code_hash, account_id, redirect_uri, code_challenge, client_state, expires_at)
+		VALUES ($1, $2, $3, $4, $5, DATE_ADD(NOW(6), INTERVAL $6 SECOND))`,
+		hashToken(code), accountID, redirectURI, codeChallenge, clientState, int(extensionCodeTTL.Seconds()))
+	return code, err
+}
+
+func pkceChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// ExchangeExtensionCode는 코드를 단 한 번 소비하고, 정확히 같은 확장 콜백
+// 주소에 대해서만 새 확장 세션을 발급한다.
+func ExchangeExtensionCode(ctx context.Context, pool *store.DB, code, redirectURI, verifier, clientState, ua string) (string, *Account, error) {
+	if code == "" || redirectURI == "" || verifier == "" || clientState == "" {
+		return "", nil, ErrBadExtensionCode
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	defer tx.Rollback(ctx)
+	var a Account
+	var disabled bool
+	var wantChallenge, wantClientState string
+	err = tx.QueryRow(ctx, `
+		SELECT a.id, COALESCE(a.email,''), a.is_admin, a.disabled
+		       , c.code_challenge, c.client_state
+		  FROM extension_login_codes_v2 c JOIN accounts a ON a.id = c.account_id
+		 WHERE c.code_hash = $1 AND c.redirect_uri = $2 AND c.expires_at > NOW(6)
+		 FOR UPDATE`,
+		hashToken(code), redirectURI).Scan(&a.ID, &a.Email, &a.IsAdmin, &disabled, &wantChallenge, &wantClientState)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrBadExtensionCode
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if disabled {
+		return "", nil, ErrDisabled
+	}
+	if subtle.ConstantTimeCompare([]byte(wantChallenge), []byte(pkceChallenge(verifier))) != 1 ||
+		subtle.ConstantTimeCompare([]byte(wantClientState), []byte(clientState)) != 1 {
+		return "", nil, ErrBadExtensionCode
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM extension_login_codes_v2 WHERE code_hash = $1`, hashToken(code)); err != nil {
+		return "", nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", nil, err
+	}
+	token, err := IssueSession(ctx, pool, a.ID, ua)
+	if err != nil {
+		return "", nil, err
+	}
+	return token, &a, nil
+}
+
 // Resolve는 세션 토큰에서 계정을 얻는다. 만료된 세션은 통과하지 않는다.
 // 수명이 절반 아래로 떨어지면 자동 연장해, 활발히 쓰는 확장이 갑자기 로그아웃되지 않게 한다.
 func Resolve(ctx context.Context, pool *store.DB, token string) (*Account, error) {
@@ -260,12 +381,23 @@ func Logout(ctx context.Context, pool *store.DB, token string) error {
 	return err
 }
 
+// LogoutAccount은 명시적으로 로그아웃했을 때 해당 계정의 모든 웹·확장 세션을
+// 폐기한다. 한쪽에서 로그아웃해도 다른 쪽이 로그인 상태로 남지 않게 한다.
+func LogoutAccount(ctx context.Context, pool *store.DB, accountID int64) error {
+	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)
+	return err
+}
+
 // PurgeExpired는 만료 세션을 정리한다. 주기적으로 호출한다.
 func PurgeExpired(ctx context.Context, pool *store.DB) (int64, error) {
 	tag, err := pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	if err != nil {
 		return 0, err
 	}
+	// 만료된 1회 로그인 자료는 민감하지 않더라도 쌓아 둘 이유가 없다.
+	_, _ = pool.Exec(ctx, `DELETE FROM extension_login_codes WHERE expires_at < now()`)
+	_, _ = pool.Exec(ctx, `DELETE FROM extension_login_codes_v2 WHERE expires_at < now()`)
+	_, _ = pool.Exec(ctx, `DELETE FROM extension_oauth_requests WHERE expires_at < now()`)
 	return tag.RowsAffected()
 }
 

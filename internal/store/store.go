@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -21,19 +22,66 @@ import (
 type DB struct{ *sql.DB }
 type Result struct{ sql.Result }
 type Tx struct{ *sql.Tx }
+type Row struct {
+	row *sql.Row
+	err error
+}
+
+func (r *Row) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.row.Scan(dest...)
+}
 
 var dollarArg = regexp.MustCompile(`\$[0-9]+`)
 
-func mysqlSQL(q string) string { return dollarArg.ReplaceAllString(q, "?") }
+// mysqlQuery는 PostgreSQL식 $1 자리표시자를 MySQL ?로 바꾼다. 같은 $1이
+// 쿼리에 두 번 나오면 MySQL에는 인자도 두 번 필요하므로, 등장 순서대로 다시
+// 펼친다. 예: "($1=” OR status=$1)" + ["pending"] → ["pending","pending"].
+func mysqlQuery(q string, args []any) (string, []any, error) {
+	matches := dollarArg.FindAllStringIndex(q, -1)
+	if len(matches) == 0 {
+		return q, args, nil
+	}
+	var b strings.Builder
+	b.Grow(len(q))
+	out := make([]any, 0, len(matches))
+	pos := 0
+	for _, m := range matches {
+		b.WriteString(q[pos:m[0]])
+		index, err := strconv.Atoi(q[m[0]+1 : m[1]])
+		if err != nil || index < 1 || index > len(args) {
+			return "", nil, fmt.Errorf("SQL 자리표시자 $%d에 대응하는 인자가 없습니다", index)
+		}
+		b.WriteByte('?')
+		out = append(out, args[index-1])
+		pos = m[1]
+	}
+	b.WriteString(q[pos:])
+	return b.String(), out, nil
+}
 func (d *DB) Exec(ctx context.Context, q string, args ...any) (Result, error) {
-	r, err := d.DB.ExecContext(ctx, mysqlSQL(q), args...)
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return Result{}, err
+	}
+	r, err := d.DB.ExecContext(ctx, q, args...)
 	return Result{r}, err
 }
 func (d *DB) Query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
-	return d.DB.QueryContext(ctx, mysqlSQL(q), args...)
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return nil, err
+	}
+	return d.DB.QueryContext(ctx, q, args...)
 }
-func (d *DB) QueryRow(ctx context.Context, q string, args ...any) *sql.Row {
-	return d.DB.QueryRowContext(ctx, mysqlSQL(q), args...)
+func (d *DB) QueryRow(ctx context.Context, q string, args ...any) *Row {
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return &Row{err: err}
+	}
+	return &Row{row: d.DB.QueryRowContext(ctx, q, args...)}
 }
 func (d *DB) Ping(ctx context.Context) error { return d.DB.PingContext(ctx) }
 func (d *DB) Begin(ctx context.Context) (*Tx, error) {
@@ -44,11 +92,19 @@ func (d *DB) Begin(ctx context.Context) (*Tx, error) {
 	return &Tx{tx}, nil
 }
 func (t *Tx) Exec(ctx context.Context, q string, args ...any) (Result, error) {
-	r, err := t.Tx.ExecContext(ctx, mysqlSQL(q), args...)
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return Result{}, err
+	}
+	r, err := t.Tx.ExecContext(ctx, q, args...)
 	return Result{r}, err
 }
-func (t *Tx) QueryRow(ctx context.Context, q string, args ...any) *sql.Row {
-	return t.Tx.QueryRowContext(ctx, mysqlSQL(q), args...)
+func (t *Tx) QueryRow(ctx context.Context, q string, args ...any) *Row {
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return &Row{err: err}
+	}
+	return &Row{row: t.Tx.QueryRowContext(ctx, q, args...)}
 }
 func (t *Tx) Commit(context.Context) error   { return t.Tx.Commit() }
 func (t *Tx) Rollback(context.Context) error { return t.Tx.Rollback() }

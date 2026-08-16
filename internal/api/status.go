@@ -169,7 +169,7 @@ func (s *Server) sessionStatus(r *http.Request) sessionJSON {
 		out.Email = acct.Email
 	}
 
-	exp, err := auth.SessionExpiry(r.Context(), s.Store.Pool, bearer(r))
+	exp, err := auth.SessionExpiry(r.Context(), s.Store.Pool, sessionToken(r))
 	if err != nil {
 		// 여기까지 왔다면 세션은 유효하다. 만료 시각만 못 읽은 것이다.
 		return out

@@ -5,9 +5,9 @@ import (
 	"net/http"
 )
 
-// 관리자 화면. 단일 HTML 파일이며 인증은 세션 토큰(localStorage)으로 한다.
-// 쿠키를 쓰지 않으므로 CSRF를 신경 쓸 필요가 없고,
-// 페이지 자체는 공개돼 있어도 관리자 토큰 없이는 아무것도 조회되지 않는다.
+// 관리자 화면. 단일 HTML 파일이며 새 로그인은 HttpOnly 쿠키, 이전 로그인은
+// 호환용 localStorage 토큰을 쓴다. 페이지 자체는 공개돼 있어도 인증 없이는
+// 아무것도 조회되지 않는다.
 //
 //go:embed admin.html
 var adminHTML []byte

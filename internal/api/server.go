@@ -101,9 +101,10 @@ func (s *Server) Routes() http.Handler {
 // 미들웨어
 // ---------------------------------------------------------------------------
 
-// cors는 확장에서의 호출을 허용한다.
+// cors는 확장에서의 Bearer 토큰 호출을 허용한다.
 // 확장 오리진(chrome-extension://)은 설치할 때마다 ID가 달라 화이트리스트할 수 없다.
-// 실제 접근 통제는 세션 토큰이 담당하며, 쿠키를 쓰지 않으므로 CSRF 표면이 없다.
+// 웹 쿠키는 SameSite=Lax이고, 상태 변경 API는 POST/PUT이라 타 사이트 폼·fetch가
+// 쿠키를 싣지 못한다. 확장 세션 브리지는 최상위 OAuth 창 + 1회 코드만 사용한다.
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -131,10 +132,37 @@ func bearer(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 }
 
+const sessionCookieName = "sooptalent_session"
+
+// sessionToken은 확장의 Bearer 토큰을 우선하고, 웹에서는 JavaScript가 읽을 수
+// 없는 HttpOnly 쿠키를 쓴다. 두 방식 모두 같은 서버 세션 행을 가리킨다.
+func sessionToken(r *http.Request) string {
+	if token := bearer(r); token != "" {
+		return token
+	}
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+func setSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: token, Path: "/", MaxAge: int(auth.SessionTTL.Seconds()),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+}
+
 // session은 로그인만 요구한다.
 func (s *Server) session(next handlerFunc) http.Handler {
 	return s.h(func(w http.ResponseWriter, r *http.Request) error {
-		acct, err := auth.Resolve(r.Context(), s.Store.Pool, bearer(r))
+		token := sessionToken(r)
+		acct, err := auth.Resolve(r.Context(), s.Store.Pool, token)
 		if err != nil {
 			return err
 		}
@@ -176,9 +204,12 @@ func bidOf(r *http.Request) string {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) error {
-	if err := auth.Logout(r.Context(), s.Store.Pool, bearer(r)); err != nil {
+	// 웹과 확장이 같은 계정 세션을 공유하는 경험을 제공하므로, 명시적 로그아웃은
+	// 이 계정이 발급받은 모든 세션을 같이 폐기한다.
+	if err := auth.LogoutAccount(r.Context(), s.Store.Pool, accountOf(r).ID); err != nil {
 		return err
 	}
+	clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

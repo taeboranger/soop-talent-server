@@ -58,7 +58,10 @@ func ConsumeState(ctx context.Context, pool *store.DB, state, provider string) (
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT redirect_uri FROM oauth_states WHERE state = $1 AND provider = $2 AND expires_at > NOW(6)`, state, provider).Scan(&redirectURI)
+	err = tx.QueryRow(ctx, `
+		SELECT redirect_uri FROM oauth_states
+		 WHERE state = $1 AND provider = $2 AND expires_at > NOW(6)
+		 FOR UPDATE`, state, provider).Scan(&redirectURI)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrBadState
 	}
