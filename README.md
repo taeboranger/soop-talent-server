@@ -107,6 +107,17 @@ MySQL 8이 **3307** 포트로 뜹니다 (로컬 MySQL과 충돌하지 않도록)
 docker compose --profile tools run --rm migrate
 ```
 
+### 처음부터 다시 만들기
+
+개발 DB를 비우고 다시 시작할 때만 `RESET_MYSQL.sql`을 실행합니다. 이 파일은
+SoopTalent 테이블과 마이그레이션 이력을 모두 지우므로, 운영 DB에서는 백업 없이 실행하지 마세요.
+
+```powershell
+mysql -h <mysql-host> -u <관리자계정> -p soop-talent < RESET_MYSQL.sql
+```
+
+그 뒤 새 서버 이미지를 배포하면 `001_init.sql` 하나가 전체 테이블을 생성합니다.
+
 ### 3. 빌드
 
 ```powershell
