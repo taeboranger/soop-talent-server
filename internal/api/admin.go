@@ -2,7 +2,9 @@ package api
 
 import (
 	_ "embed"
+	"html"
 	"net/http"
+	"strings"
 )
 
 // 관리자 화면. 단일 HTML 파일이며 새 로그인은 HttpOnly 쿠키, 이전 로그인은
@@ -25,10 +27,26 @@ var guideHTML []byte
 //go:embed guide-detail.html
 var guideDetailHTML []byte
 
+//go:embed welcome.html
+var welcomeHTML []byte
+
+//go:embed privacy.html
+var privacyHTML []byte
+
 func (s *Server) adminPage() http.Handler { return pageHandler(adminHTML) }
 
 func (s *Server) guidePage() http.Handler       { return pageHandler(guideHTML) }
 func (s *Server) guideDetailPage() http.Handler { return pageHandler(guideDetailHTML) }
+func (s *Server) privacyPage() http.Handler     { return pageHandler(privacyHTML) }
+
+func (s *Server) welcomePage() http.Handler {
+	url := strings.TrimSpace(s.StreamerExtensionInstallURL)
+	if url == "" {
+		url = "https://github.com/"
+	}
+	body := strings.ReplaceAll(string(welcomeHTML), "{{STREAMER_EXTENSION_INSTALL_URL}}", html.EscapeString(url))
+	return pageHandler([]byte(body))
+}
 
 func (s *Server) dashboardPage() http.Handler {
 	inner := pageHandler(dashboardHTML)

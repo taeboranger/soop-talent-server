@@ -44,6 +44,8 @@ type Server struct {
 	Streamer StreamerHook
 	OAuth    *oauth.Registry // nil이면 소셜 로그인 비활성
 	SoopAPI  *soop.Client    // 게시글·댓글 조회
+	// StreamerExtensionInstallURL은 첫 로그인 안내에 표시할 임시 설치 주소다.
+	StreamerExtensionInstallURL string
 }
 
 type ctxKey int
@@ -86,7 +88,9 @@ func (s *Server) Routes() http.Handler {
 
 	// 스트리머 대시보드 (웹)
 	mux.Handle("GET /", s.dashboardPage())
+	mux.Handle("GET /welcome", s.welcomePage())
 	mux.Handle("GET /guide", s.guidePage())
+	mux.Handle("GET /privacy", s.privacyPage())
 	mux.Handle("GET /guide/detail", s.guideDetailPage())
 
 	// 관리자
@@ -103,8 +107,7 @@ func (s *Server) Routes() http.Handler {
 
 // cors는 확장에서의 Bearer 토큰 호출을 허용한다.
 // 확장 오리진(chrome-extension://)은 설치할 때마다 ID가 달라 화이트리스트할 수 없다.
-// 웹 쿠키는 SameSite=Lax이고, 상태 변경 API는 POST/PUT이라 타 사이트 폼·fetch가
-// 쿠키를 싣지 못한다. 확장 세션 브리지는 최상위 OAuth 창 + 1회 코드만 사용한다.
+// 대시보드와 확장은 Bearer 세션을 각자 보관하며, 상태 변경 API는 해당 토큰이 있어야 한다.
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

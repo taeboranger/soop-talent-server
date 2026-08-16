@@ -214,6 +214,7 @@
     </div>
     <div class="row" id="whoami" hidden>
       <a class="small" href="/guide" target="_blank">사용 가이드</a>
+      <a class="small" href="/privacy" target="_blank">개인정보처리방침</a>
       <span class="small muted" id="meLabel"></span>
       <span class="badge info" id="bidBadge" hidden></span>
       <!-- 어느 탭에 있든 보이는 연결 요약. 누르면 자세한 내용으로 데려간다 -->
@@ -230,6 +231,7 @@
       <h2 id="authTitle">로그인</h2>
       <div class="stack" id="socialBox"></div>
       <p class="small muted" id="socialHelp" hidden>로그인 제공자를 설정 중입니다. 잠시 후 다시 시도해 주세요.</p>
+      <a class="small muted" href="/privacy" target="_blank">개인정보처리방침</a>
     </div>
   </section>
 
@@ -1172,6 +1174,12 @@ async function start() {
   if (t) {
     token = t;
     localStorage.setItem(KEY, t);
+    if (frag.get("new_account") === "1") {
+      // 새 계정에만 한 번 표시한다. 토큰은 URL 프래그먼트에만 두며,
+      // welcome 페이지가 즉시 localStorage에 저장한 뒤 주소에서 지운다.
+      location.replace(`/welcome#token=${encodeURIComponent(t)}`);
+      return;
+    }
     history.replaceState(null, "", location.pathname);
   } else if (err) {
     history.replaceState(null, "", location.pathname);
