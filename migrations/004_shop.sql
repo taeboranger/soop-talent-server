@@ -1,4 +1,12 @@
-ALTER TABLE point_events ADD COLUMN IF NOT EXISTS reason TEXT NULL;
+-- MySQL 8.0은 ADD COLUMN IF NOT EXISTS를 지원하지 않는다. 이전 실행에서
+-- 열만 만들어지고 이력이 남지 않은 경우도 안전하게 재시작할 수 있게 한다.
+SET @reason_exists := (SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'point_events' AND column_name = 'reason');
+SET @reason_sql := IF(@reason_exists = 0,
+  'ALTER TABLE point_events ADD COLUMN reason TEXT NULL', 'DO 0');
+PREPARE sooptalent_stmt FROM @reason_sql;
+EXECUTE sooptalent_stmt;
+DEALLOCATE PREPARE sooptalent_stmt;
 
 CREATE TABLE IF NOT EXISTS shop_pages (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
