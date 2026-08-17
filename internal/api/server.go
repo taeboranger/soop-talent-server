@@ -44,7 +44,7 @@ type Server struct {
 	Streamer StreamerHook
 	OAuth    *oauth.Registry // nil이면 소셜 로그인 비활성
 	SoopAPI  *soop.Client    // 게시글·댓글 조회
-	// StreamerExtensionInstallURL은 첫 로그인 안내에 표시할 임시 설치 주소다.
+	// StreamerExtensionInstallURL은 첫 로그인 안내에 표시할 설치 주소다.
 	StreamerExtensionInstallURL string
 }
 

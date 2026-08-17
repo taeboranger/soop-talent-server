@@ -105,7 +105,7 @@ func main() {
 		Addr: listen,
 		Handler: (&api.Server{
 			Store: st, Log: log, Streamer: col, OAuth: reg, SoopAPI: soop.NewClient(),
-			StreamerExtensionInstallURL: envOr("STREAMER_EXTENSION_INSTALL_URL", "https://github.com/"),
+			StreamerExtensionInstallURL: envOr("STREAMER_EXTENSION_INSTALL_URL", "https://chromewebstore.google.com/detail/ockjgoalmoffhfphpdijdlkmcafkkgln"),
 		}).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

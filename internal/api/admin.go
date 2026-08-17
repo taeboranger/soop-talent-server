@@ -42,7 +42,7 @@ func (s *Server) privacyPage() http.Handler     { return pageHandler(privacyHTML
 func (s *Server) welcomePage() http.Handler {
 	url := strings.TrimSpace(s.StreamerExtensionInstallURL)
 	if url == "" {
-		url = "https://github.com/"
+		url = "https://chromewebstore.google.com/detail/ockjgoalmoffhfphpdijdlkmcafkkgln"
 	}
 	body := strings.ReplaceAll(string(welcomeHTML), "{{STREAMER_EXTENSION_INSTALL_URL}}", html.EscapeString(url))
 	return pageHandler([]byte(body))
