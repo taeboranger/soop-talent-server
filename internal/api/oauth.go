@@ -116,7 +116,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 		return bounce(w, r, redirectURI, url.Values{"error": {"로그인 처리에 실패했습니다."}})
 	}
 
-	token, acct, created, err := auth.LoginWithSocial(r.Context(), s.Store.Pool, auth.SocialUser{
+	token, acct, err := auth.LoginWithSocial(r.Context(), s.Store.Pool, auth.SocialUser{
 		Provider: string(info.Provider), ID: info.ID, Email: info.Email,
 		EmailVerified: info.EmailVerified, Nickname: info.Nickname,
 	}, r.UserAgent())
@@ -125,17 +125,11 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 		return bounce(w, r, redirectURI, url.Values{"error": {err.Error()}})
 	}
 
-	s.Log.Info("소셜 로그인", "provider", p, "account", acct.ID, "created", created)
-	result := url.Values{
+	s.Log.Info("소셜 로그인", "provider", p, "account", acct.ID)
+	return bounce(w, r, redirectURI, url.Values{
 		"token": {token},
 		"email": {acct.Email},
-	}
-	if created {
-		// 대시보드만 이 값을 받아 /welcome으로 이동한다. 확장은 처음 로그인해도
-		// 안내 페이지를 열 수 없으므로 값을 무시하고 자기 세션만 저장한다.
-		result.Set("new_account", "1")
-	}
-	return bounce(w, r, redirectURI, result)
+	})
 }
 
 // bounce는 확장 또는 명시적으로 허용한 웹 주소로 결과를 돌려보낸다.

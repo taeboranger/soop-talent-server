@@ -43,7 +43,7 @@
   header.top { display:flex; align-items:center; justify-content:space-between;
                gap:12px; padding-bottom:16px; margin-bottom:18px;
                border-bottom:1px solid var(--line); }
-  .brand { display:flex; align-items:center; gap:9px; }
+  .brand { display:flex; align-items:center; gap:9px; color:var(--fg); text-decoration:none; }
   .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
           display:grid; place-items:center; }
   .logo i { display:block; width:13px; height:11px;
@@ -208,10 +208,10 @@
 <div class="wrap">
 
   <header class="top">
-    <div class="brand">
+    <a class="brand" href="/" aria-label="SoopTalent 홈">
       <span class="logo"><i></i></span>
       <h1>SoopTalent</h1>
-    </div>
+    </a>
     <div class="row" id="whoami" hidden>
       <a class="small" href="/guide" target="_blank">사용 가이드</a>
       <a class="small" href="/privacy" target="_blank">개인정보처리방침</a>
@@ -1174,10 +1174,12 @@ async function start() {
   if (t) {
     token = t;
     localStorage.setItem(KEY, t);
-    if (frag.get("new_account") === "1") {
-      // 새 계정에만 한 번 표시한다. 토큰은 URL 프래그먼트에만 두며,
-      // welcome 페이지가 즉시 localStorage에 저장한 뒤 주소에서 지운다.
-      location.replace(`/welcome#token=${encodeURIComponent(t)}`);
+    // 안내 완료 여부는 서버 계정이 아니라 이 브라우저에만 저장한다.
+    // 따라서 새 기기·새 브라우저에서 로그인하면 가이드를 다시 볼 수 있다.
+    const identity = (frag.get("email") || "unknown").toLowerCase();
+    const welcomeKey = `sooptalent.welcomeSeen.${identity}`;
+    if (!localStorage.getItem(welcomeKey)) {
+      location.replace(`/welcome#token=${encodeURIComponent(t)}&welcome_key=${encodeURIComponent(welcomeKey)}`);
       return;
     }
     history.replaceState(null, "", location.pathname);

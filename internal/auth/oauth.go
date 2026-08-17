@@ -88,7 +88,6 @@ type SocialUser struct {
 }
 
 // LoginWithSocial은 소셜 계정으로 로그인하고, 없으면 계정을 만든다.
-// created는 이번 요청으로 SoopTalent 계정이 처음 만들어졌는지를 뜻한다.
 //
 // 계정 연결 규칙:
 //  1. 이미 연결된 (provider, id)가 있으면 그 계정으로 로그인한다.
@@ -98,10 +97,10 @@ type SocialUser struct {
 // 2번에서 검증 여부를 따지는 이유: 검증되지 않은 이메일로 자동 연결하면,
 // 남의 이메일을 등록한 소셜 계정으로 그 사람의 계정을 탈취할 수 있다.
 // 네이버·카카오는 검증 여부를 신뢰할 수 없으므로 대부분 3번으로 떨어진다.
-func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAgent string) (token string, acct *Account, created bool, err error) {
+func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAgent string) (token string, acct *Account, err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -118,7 +117,7 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 	switch {
 	case err == nil:
 		if disabled {
-			return "", nil, false, ErrDisabled
+			return "", nil, ErrDisabled
 		}
 		_, _ = tx.Exec(ctx, `
 			UPDATE oauth_identities SET last_login_at = now(), email = NULLIF($3,'')
@@ -135,11 +134,11 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 				Scan(&a.ID, &a.Email, &a.IsAdmin, &disabled)
 			if err == nil {
 				if disabled {
-					return "", nil, false, ErrDisabled
+					return "", nil, ErrDisabled
 				}
 				linked = true
 			} else if !errors.Is(err, sql.ErrNoRows) {
-				return "", nil, false, err
+				return "", nil, err
 			}
 		}
 
@@ -153,7 +152,7 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 				if err := tx.QueryRow(ctx,
 					`SELECT EXISTS(SELECT 1 FROM accounts WHERE lower(email) = $1)`, e).
 					Scan(&exists); err != nil {
-					return "", nil, false, err
+					return "", nil, err
 				}
 				if !exists {
 					email = &e
@@ -163,13 +162,12 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 				INSERT INTO accounts (email, password_hash, is_admin)
 				VALUES ($1, NULL, FALSE)`, email)
 			if err != nil {
-				return "", nil, false, fmt.Errorf("계정 생성: %w", err)
+				return "", nil, fmt.Errorf("계정 생성: %w", err)
 			}
 			a.ID, err = tag.LastInsertId()
 			if err != nil {
-				return "", nil, false, err
+				return "", nil, err
 			}
-			created = true
 			if email != nil {
 				a.Email = *email
 			}
@@ -182,34 +180,34 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 			ON DUPLICATE KEY UPDATE last_login_at = NOW(6)`,
 			su.Provider, su.ID, a.ID, su.Email, su.EmailVerified); err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-				return "", nil, false, apperr.New("이 계정에는 이미 같은 소셜 로그인이 연결돼 있습니다")
+				return "", nil, apperr.New("이 계정에는 이미 같은 소셜 로그인이 연결돼 있습니다")
 			}
-			return "", nil, false, err
+			return "", nil, err
 		}
 
 	default:
-		return "", nil, false, err
+		return "", nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", nil, false, err
+		return "", nil, err
 	}
 
 	// 지정 이메일의 실제 소유자만 관리자다. 검증되지 않은 제공자 프로필의
 	// 이메일 문자열만으로 권한을 얻지 못하게 EmailVerified를 반드시 확인한다.
 	if su.EmailVerified && IsAdminEmail(su.Email) {
 		if _, err := pool.Exec(ctx, `UPDATE accounts SET is_admin = TRUE WHERE id = $1`, a.ID); err != nil {
-			return "", nil, false, err
+			return "", nil, err
 		}
 		a.IsAdmin = true
 	}
 
 	token, err = issueSession(ctx, pool, a.ID, userAgent)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, err
 	}
 	_, _ = pool.Exec(ctx, `UPDATE accounts SET last_login_at = now() WHERE id = $1`, a.ID)
-	return token, &a, created, nil
+	return token, &a, nil
 }
 
 // LinkedProviders는 계정에 연결된 소셜 제공자 목록이다.

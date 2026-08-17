@@ -8,7 +8,7 @@
   :root { --blue:#1768e8; --cyan:#22b8ee; --ink:#15213b; --muted:#61708b; --line:#dce4f2; --soft:#f5f8ff; }
   * { box-sizing:border-box; } body { margin:0; background:#f6f9ff; color:var(--ink); font:16px/1.65 "Pretendard","Malgun Gothic","Segoe UI",sans-serif; }
   main { width:min(760px,calc(100% - 32px)); margin:54px auto; }
-  .brand { display:flex; align-items:center; justify-content:center; gap:9px; color:var(--blue); font-weight:800; font-size:20px; }
+  .brand { display:flex; align-items:center; justify-content:center; gap:9px; color:var(--blue); font-weight:800; font-size:20px; text-decoration:none; }
   .logo { width:30px; height:30px; border-radius:10px; background:linear-gradient(135deg,var(--blue),var(--cyan)); position:relative; }
   .logo:after { content:""; position:absolute; left:11px; top:8px; border-left:10px solid white; border-top:7px solid transparent; border-bottom:7px solid transparent; }
   .card { background:#fff; border:1px solid var(--line); border-radius:22px; box-shadow:0 16px 42px #234e9630; padding:42px; margin-top:18px; }
@@ -23,7 +23,7 @@
 </head>
 <body>
 <main>
-  <div class="brand"><span class="logo"></span>SoopTalent</div>
+  <a class="brand" href="/" aria-label="SoopTalent 홈"><span class="logo"></span>SoopTalent</a>
   <section class="card">
     <h1>환영합니다!<br>달란트 운영을 시작해 볼까요?</h1>
     <p class="lead">처음 한 번만 설정하면, 이후에는 방송과 시청자 참여를 편하게 관리할 수 있습니다.</p>
@@ -46,6 +46,10 @@
   const token = p.get("token");
   if (token) {
     localStorage.setItem("sooptalent.token", token);
+    const welcomeKey = p.get("welcome_key");
+    if (welcomeKey && /^sooptalent\.welcomeSeen\./.test(welcomeKey)) {
+      localStorage.setItem(welcomeKey, "1");
+    }
     history.replaceState(null, "", location.pathname);
   }
 })();

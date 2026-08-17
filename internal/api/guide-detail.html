@@ -33,7 +33,7 @@
   header.top { display:flex; align-items:center; justify-content:space-between;
                gap:12px; padding-bottom:16px; margin-bottom:22px;
                border-bottom:1px solid var(--line); }
-  .brand { display:flex; align-items:center; gap:9px; }
+  .brand { display:flex; align-items:center; gap:9px; color:var(--fg); text-decoration:none; }
   .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
           display:grid; place-items:center; }
   .logo i { display:block; width:13px; height:11px;
@@ -134,10 +134,10 @@
 </svg>
 
 <header class="top">
-  <div class="brand">
+  <a class="brand" href="/" aria-label="SoopTalent 홈">
     <span class="logo"><i></i></span>
     <h1>자세한 안내</h1>
-  </div>
+  </a>
   <a href="/guide">← 기본 가이드</a>
 </header>
 
