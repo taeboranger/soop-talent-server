@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>SoopTalent</title>
 <style>
   /* SOOP 계열 파랑. 뉴트럴도 파랑 쪽으로 기울여 한 벌로 보이게 한다.
@@ -44,13 +45,7 @@
                gap:12px; padding-bottom:16px; margin-bottom:18px;
                border-bottom:1px solid var(--line); }
   .brand { display:flex; align-items:center; gap:9px; color:var(--fg); text-decoration:none; }
-  .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
-          display:grid; place-items:center; }
-  .logo i { display:block; width:13px; height:11px;
-            background:
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 0 100%/3px 5px no-repeat,
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 5px 100%/3px 8px no-repeat,
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 10px 100%/3px 11px no-repeat; }
+  .logo { width:28px; height:28px; object-fit:contain; display:block; }
 
   input, button, select, textarea { font:inherit; }
   input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],
@@ -92,10 +87,6 @@
   .badge.info{background:var(--accent-soft);color:var(--accent)} .badge.info::before{content:"◆"}
   /* 꺼 둔 것은 고장이 아니다 — 빨강 대신 회색으로 둔다 */
   .badge.off{background:var(--bg-inset);color:var(--fg-muted)} .badge.off::before{content:"○"}
-
-  /* 헤더의 연결 배지. 어느 탭에 있든 보인다 */
-  button.chip { border:none; background:none; padding:0; cursor:pointer; }
-  button.chip:hover:not(:disabled) { background:none; filter:brightness(.94); }
 
   /* 연결 상태 표 — 항목 / 배지 / 설명 */
   .conn { display:grid; grid-template-columns:auto auto 1fr auto; gap:9px 12px;
@@ -209,7 +200,7 @@
 
   <header class="top">
     <a class="brand" href="/" aria-label="SoopTalent 홈">
-      <span class="logo"><i></i></span>
+      <img class="logo" src="/favicon.svg" alt="">
       <h1>SoopTalent</h1>
     </a>
     <div class="row" id="whoami" hidden>
@@ -217,8 +208,6 @@
       <a class="small" href="/privacy" target="_blank">개인정보처리방침</a>
       <span class="small muted" id="meLabel"></span>
       <span class="badge info" id="bidBadge" hidden></span>
-      <!-- 어느 탭에 있든 보이는 연결 요약. 누르면 자세한 내용으로 데려간다 -->
-      <button class="badge warn chip" id="connChip" hidden title="연결 상태 보기">확인 중</button>
       <button class="sm" id="logout">로그아웃</button>
     </div>
   </header>
@@ -488,7 +477,6 @@ function signOut() {
   token = ""; me = null;
   localStorage.removeItem(KEY);
   stopConnPolling();
-  $("connChip").hidden = true;
   $("authView").hidden = false;
   $("claimView").hidden = true;
   $("mainView").hidden = true;
@@ -567,13 +555,6 @@ function connRow(name, tone, label, detail, action) {
     action || el("span", {}));
 }
 
-function setChip(tone, label) {
-  const chip = $("connChip");
-  chip.className = `badge ${tone} chip`;
-  chip.textContent = label;
-  chip.hidden = false;
-}
-
 function renderConn(s) {
   $("connRows").replaceChildren();
   $("connCheckedAt").textContent = new Date().toLocaleTimeString("ko-KR");
@@ -610,9 +591,6 @@ function renderConn(s) {
   $("connNote").textContent =
     c.lastError && c.tone !== "ok" ? `마지막 오류: ${c.lastError}` : "";
 
-  setChip(s.overall, {
-    ok: "정상", off: "일부 꺼짐", warn: "확인 필요", bad: "문제 있음",
-  }[s.overall] ?? "확인 필요");
 }
 
 function renderConnOffline(reason) {
@@ -620,7 +598,6 @@ function renderConnOffline(reason) {
   $("connCheckedAt").textContent = new Date().toLocaleTimeString("ko-KR");
   connRow("서버", "bad", "응답 없음", reason || "상태를 확인하지 못했습니다.");
   $("connNote").textContent = "";
-  setChip("bad", "서버 응답 없음");
 }
 
 async function loadConn({ announce = false } = {}) {
@@ -668,11 +645,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && connTimer) loadConn();
 });
 $("connRefresh").addEventListener("click", () => loadConn({ announce: true }));
-$("connChip").addEventListener("click", () => {
-  document.querySelector('nav.tabs button[data-tab="overview"]')?.click();
-  $("connCard").scrollIntoView({ behavior: "smooth", block: "center" });
-});
-
 // ── 대시보드 ─────────────────────────────────────────────────────────
 async function loadOverview() {
   try {
@@ -1140,7 +1112,6 @@ async function start() {
   if (!me.approvedBid) {
     // 승인 전에는 볼 연결 상태가 없다 — 연결 신청부터가 순서다.
     stopConnPolling();
-    $("connChip").hidden = true;
     $("mainView").hidden = true;
     $("claimView").hidden = false;
     const pending = (me.claims ?? []).find((c) => c.status === "pending");

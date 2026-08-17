@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="robots" content="noindex, nofollow">
 <title>SoopTalent 관리자</title>
 <style>
@@ -27,6 +28,8 @@
          font:14px/1.55 "Pretendard","Malgun Gothic","Segoe UI",system-ui,sans-serif; }
   .wrap { max-width:900px; margin:0 auto; padding:28px 20px 60px; }
   h1 { font-size:20px; margin:0; }
+  h1 a { display:inline-flex; align-items:center; gap:8px; color:var(--fg); text-decoration:none; }
+  h1 img { width:27px; height:27px; object-fit:contain; }
   .row { display:flex; align-items:center; gap:10px; }
   .between { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   header { margin-bottom:22px; }
@@ -80,7 +83,7 @@
 <div class="wrap">
 
   <header class="between">
-    <h1>SoopTalent 관리자</h1>
+    <h1><a href="/" aria-label="SoopTalent 홈"><img src="/favicon.svg" alt="">SoopTalent 관리자</a></h1>
     <div class="row" id="whoami" hidden>
       <span class="meta" id="adminEmail"></span>
       <button id="logout">로그아웃</button>

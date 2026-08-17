@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>SoopTalent 자세한 안내</title>
 <style>
   :root {
@@ -34,13 +35,7 @@
                gap:12px; padding-bottom:16px; margin-bottom:22px;
                border-bottom:1px solid var(--line); }
   .brand { display:flex; align-items:center; gap:9px; color:var(--fg); text-decoration:none; }
-  .logo { width:26px; height:26px; border-radius:7px; background:var(--accent);
-          display:grid; place-items:center; }
-  .logo i { display:block; width:13px; height:11px;
-            background:
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 0 100%/3px 5px no-repeat,
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 5px 100%/3px 8px no-repeat,
-              linear-gradient(var(--accent-fg),var(--accent-fg)) 10px 100%/3px 11px no-repeat; }
+  .logo { width:28px; height:28px; object-fit:contain; display:block; }
   h1 { font-size:19px; margin:0; }
   .lede { font-size:15.5px; color:var(--fg-muted); margin:0 0 4px; }
 
@@ -135,7 +130,7 @@
 
 <header class="top">
   <a class="brand" href="/" aria-label="SoopTalent 홈">
-    <span class="logo"><i></i></span>
+    <img class="logo" src="/favicon.svg" alt="">
     <h1>자세한 안내</h1>
   </a>
   <a href="/guide">← 기본 가이드</a>

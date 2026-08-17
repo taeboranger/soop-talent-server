@@ -62,6 +62,7 @@ func (s *Server) Routes() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("GET /favicon.svg", s.faviconPage())
 
 	// 인증 불필요
 	mux.Handle("GET /api/health", s.h(s.handleHealth))

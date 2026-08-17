@@ -33,11 +33,23 @@ var welcomeHTML []byte
 //go:embed privacy.html
 var privacyHTML []byte
 
+//go:embed favicon.svg
+var faviconSVG []byte
+
 func (s *Server) adminPage() http.Handler { return pageHandler(adminHTML) }
 
 func (s *Server) guidePage() http.Handler       { return pageHandler(guideHTML) }
 func (s *Server) guideDetailPage() http.Handler { return pageHandler(guideDetailHTML) }
 func (s *Server) privacyPage() http.Handler     { return pageHandler(privacyHTML) }
+
+func (s *Server) faviconPage() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=604800")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(faviconSVG)
+	})
+}
 
 func (s *Server) welcomePage() http.Handler {
 	url := strings.TrimSpace(s.StreamerExtensionInstallURL)
