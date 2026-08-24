@@ -300,10 +300,10 @@
             <td>전날 순위 상위 100명에게 순위에 따라 가산점을 줍니다.</td></tr>
         <tr><td><strong>후원</strong></td><td class="auto"><span class="badge ok">자동</span></td>
             <td>별풍선과 애드벌룬을 개수에 비례해 환산합니다. 환산율을 따로 정할 수 있습니다.</td></tr>
-        <tr><td><strong>팬클럽 가입</strong></td><td class="auto"><span class="badge ok">자동</span></td>
-            <td>가입이 확인되면 최초 한 번 지급합니다.</td></tr>
-        <tr><td><strong>구독</strong></td><td class="auto"><span class="badge ok">자동</span></td>
-            <td>기본 달란트에 구독 개월 수만큼 더해서 지급합니다. 개월 수 상한을 정할 수 있습니다.</td></tr>
+        <tr><td><strong>팬클럽 가입</strong></td><td class="auto"><span class="badge warn">예정</span></td>
+            <td>현재 비활성화되어 있습니다. SOOP API 승인 후 정확한 가입 이벤트로 업데이트할 예정입니다.</td></tr>
+        <tr><td><strong>구독</strong></td><td class="auto"><span class="badge warn">예정</span></td>
+            <td>SOOP API 승인 후 구독·연속 구독·구독 선물을 정확히 구분해 적립할 예정입니다.</td></tr>
         <tr><td><strong>게시글 · 댓글</strong></td><td class="auto"><span class="badge warn">수동</span></td>
             <td>방송국 게시판에서 버튼을 눌러 직접 지급합니다.</td></tr>
         <tr><td><strong>직접 지급</strong></td><td class="auto"><span class="badge warn">수동</span></td>
@@ -312,10 +312,17 @@
     </table>
   </div>
 
+  <div class="callout warn">
+    <strong>SOOP API 승인 후 업데이트 예정</strong><br>
+    팬가입 적립은 현재 비활성화되어 새 달란트가 쌓이지 않습니다.
+    또한 구독·연속 구독·구독 선물의 정확한 적립, 영상풍선·미션 후원 등 추가 후원 유형,
+    비밀번호·접근 제한 방송까지 안정적인 공식 채팅 연동은 SOOP API 승인 후 업데이트합니다.
+  </div>
+
   <h3>채팅 연동 켜고 끄기</h3>
   <p>
     <strong>대시보드</strong> 탭 맨 위 <strong>연결 상태</strong> 카드에서 채팅 연동을 끌 수 있습니다.
-    끄면 서버가 방송 채팅에서 빠져나오고, <strong>방송 시청·채팅·후원·팬클럽 달란트가 멈춥니다.</strong>
+    끄면 서버가 방송 채팅에서 빠져나오고, <strong>방송 시청·채팅·후원 달란트가 멈춥니다.</strong>
   </p>
   <ul>
     <li>일별 랭킹과 게시판 직접 지급은 확장이 담당하므로 <strong>그대로 동작합니다.</strong></li>
