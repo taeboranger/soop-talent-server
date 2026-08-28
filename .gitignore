@@ -1,11 +1,27 @@
 # 시크릿
 .env
 *.env
+.env.local
 !.env.example
+!.env.local.example
 
 # 빌드 산출물
 bin/
 node_modules/
+.npm-cache/
+.gocache/
+
+# 서버 실행에는 필요 없는 문서·생성물. 공개 가이드는 sooptalent-docs 저장소가 맡는다.
+README.md
+API.md
+DESIGN.md
+DEPLOYMENT.md
+RESET_MYSQL.sql
+marketing/
+output/
+docs/
+tools/
+.env.local.example
 
 # 실행 로그 — 시청자 아이디가 남는다
 *.log
