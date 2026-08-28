@@ -274,7 +274,12 @@ func (c *Collector) SetSDKState(bid, phase, broadNo, detail, lastErr string) {
 		e.state.BroadNo = broadNo
 	}
 	if phase == soop.PhaseConnected {
-		e.state.ConnectedAt, e.state.Retries = now, 0
+		e.state.ConnectedAt, e.state.Retries, e.state.LastError = now, 0, ""
+	}
+	// 방송 종료(104)는 정상 대기 상태다. 이전 SDK 원문 오류가 다음 방송까지
+	// 남아 스트리머를 혼란스럽게 하지 않도록 offline 전환 때도 비운다.
+	if phase == soop.PhaseOffline && lastErr == "" {
+		e.state.LastError = ""
 	}
 	if lastErr != "" {
 		e.state.LastError = lastErr

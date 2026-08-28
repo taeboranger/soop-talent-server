@@ -44,6 +44,11 @@ function sendJSON(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
+function sendEmpty(res, status = 204) {
+  res.writeHead(status, { "Cache-Control": "no-store" });
+  res.end();
+}
+
 async function identify(accessToken) {
   if (!browser) throw new Error("Chat SDK 브라우저가 아직 준비되지 않았습니다.");
   const page = await browser.newPage();
@@ -63,7 +68,8 @@ async function identify(accessToken) {
 }
 
 const identityServer = http.createServer(async (req, res) => {
-  if (req.method !== "POST" || new URL(req.url, "http://localhost").pathname !== "/identity") {
+  const pathname = new URL(req.url, "http://localhost").pathname;
+  if (req.method !== "POST" || (pathname !== "/identity" && pathname !== "/reconcile")) {
     sendJSON(res, 404, { error: "not found" });
     return;
   }
@@ -76,6 +82,19 @@ const identityServer = http.createServer(async (req, res) => {
     for await (const chunk of req) {
       raw += chunk;
       if (raw.length > 64 * 1024) throw new Error("request too large");
+    }
+    if (pathname === "/reconcile") {
+      const bid = String(JSON.parse(raw)?.bid || "").trim();
+      if (!bid || bid.length > 255 || /[|/\\]/.test(bid)) {
+        sendJSON(res, 400, { error: "invalid bid" });
+        return;
+      }
+      // 껐다가 바로 켜도 이전 SDK 페이지가 남지 않게 즉시 버리고, 새 DB
+      // 설정으로 다시 맞춘다. 실제 연결은 백그라운드에서 진행한다.
+      await closeSession(bid);
+      void queueReconcile();
+      sendEmpty(res);
+      return;
     }
     const { accessToken } = JSON.parse(raw);
     if (typeof accessToken !== "string" || !accessToken || accessToken.length > 16 * 1024) {
@@ -225,7 +244,10 @@ async function openSession(browser, target) {
         const detail = window.__soopTalentReady
           ? "공식 채팅을 받고 있습니다. SDK의 일시 상태 알림을 확인 중입니다."
           : "공식 채팅 연결을 다시 확인합니다.";
-        window.__soopTalentState(phase, room.chatNumber || "", detail, text);
+        // SDK의 상태 알림 원문은 운영 로그에만 남긴다. 스트리머 화면에는
+        // "마지막 오류" 같은 기술 문구를 노출하지 않는다.
+        console.warn("[SoopTalent Chat SDK]", text);
+        window.__soopTalentState(phase, room.chatNumber || "", detail, "");
       });
       const connected = sdk.connect().then(
         () => ({ kind: "connect" }),
@@ -259,7 +281,9 @@ async function openSession(browser, target) {
     console.log(`[${bid}] 공식 채팅 연결${broadNo ? ` (${broadNo})` : ""}`);
   } catch (error) {
     session.dead = true;
-    await state(bid, "offline", "", "방송이 꺼져 있거나 채팅방이 아직 준비되지 않았습니다. 자동으로 다시 확인합니다.", error.message);
+    // SDK 104는 방송 종료 때도 정상적으로 오는 응답이다. 화면은 방송 대기로
+    // 유지하고 기술적인 오류 원문은 서버 로그에만 남긴다.
+    await state(bid, "offline", "", "방송이 꺼져 있거나 채팅방이 아직 준비되지 않았습니다. 자동으로 다시 확인합니다.", "");
     console.warn(`[${bid}] 연결 대기:`, error.message);
   }
 }
@@ -284,6 +308,17 @@ async function reconcile(browser) {
   }
 }
 
+// 주기 동기화와 설정 변경 요청이 겹치면 두 SDK 페이지가 열릴 수 있다.
+// 하나씩 직렬화해, 토글 뒤에는 항상 현재 설정으로 새 연결만 남긴다.
+let reconcileTail = Promise.resolve();
+function queueReconcile() {
+  const work = reconcileTail.then(() => reconcile(browser));
+  reconcileTail = work.catch((error) => {
+    console.error("채팅 대상 동기화 실패:", error.message);
+  });
+  return work;
+}
+
 browser = await puppeteer.launch({
   executablePath,
   headless: true,
@@ -296,8 +331,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 console.log("SOOP 공식 Chat SDK 브리지 시작");
 while (!stopping) {
-  try { await reconcile(browser); }
-  catch (error) { console.error("채팅 대상 동기화 실패:", error.message); }
+  await queueReconcile();
   await new Promise((resolve) => setTimeout(resolve, pollMs));
 }
 for (const bid of [...sessions.keys()]) await closeSession(bid);

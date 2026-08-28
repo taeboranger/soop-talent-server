@@ -62,7 +62,6 @@ type chatJSON struct {
 	ConnectedAt  *time.Time `json:"connectedAt,omitempty"`
 	LastPacketAt *time.Time `json:"lastPacketAt,omitempty"`
 	Packets      int64      `json:"packets"`
-	LastError    string     `json:"lastError,omitempty"`
 	Retries      int        `json:"retries,omitempty"`
 	Source       string     `json:"source,omitempty"`
 }
@@ -133,6 +132,9 @@ func (s *Server) handleSetChat(w http.ResponseWriter, r *http.Request) error {
 	if err := s.Streamer.SetChat(r.Context(), bid, *req.Enabled); err != nil {
 		return err
 	}
+	// 평소 브리지는 30초마다 대상 목록을 읽는다. 껐다가 바로 켠 경우에는
+	// 남아 있던 SDK 세션을 즉시 버리고 현재 설정으로 다시 연다.
+	s.requestBridgeReconcile(r.Context(), bid)
 	s.Log.Info("채팅 연동 설정 변경", "bid", bid, "enabled", *req.Enabled)
 	writeJSON(w, http.StatusOK, s.chatStatus(bid))
 	return nil
@@ -216,7 +218,6 @@ func (s *Server) chatStatus(bid string) chatJSON {
 		Detail:       st.Chat.Detail,
 		BroadNo:      st.Chat.BroadNo,
 		Packets:      st.Chat.Packets,
-		LastError:    st.Chat.LastError,
 		Retries:      st.Chat.Retries,
 		Since:        nonZero(st.Chat.Since),
 		ConnectedAt:  nonZero(st.Chat.ConnectedAt),

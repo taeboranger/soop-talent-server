@@ -613,9 +613,9 @@ function renderConn(s) {
   connRow("방송", s.live ? "ok" : "off", s.live ? "방송 중" : "대기",
     s.live ? "" : "방송이 시작되면 자동으로 수집합니다.");
 
-  // 끊긴 이유는 다시 붙어도 남겨 둔다 — "아까 왜 끊겼지"에 답할 수 있어야 한다.
-  $("connNote").textContent =
-    c.lastError && c.tone !== "ok" ? `마지막 오류: ${c.lastError}` : "";
+  // SDK의 세부 오류는 서버 운영 로그에서만 본다. 방송 종료(104)처럼 정상적인
+  // 대기 상태를 스트리머에게 장애로 보이게 하지 않는다.
+  $("connNote").textContent = "";
 
 }
 
