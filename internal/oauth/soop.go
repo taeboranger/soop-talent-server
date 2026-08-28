@@ -8,14 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 )
 
 // exchangeSOOP은 SOOP의 1회용 code를 토큰으로 교환한 뒤, 토큰 소유자의
-// 실제 방송국 ID를 공식 API 응답으로 검증한다. user/stationinfo는 직접 ID를
-// 주지 않지만 SOOP이 생성한 profile_image URL에 방송국 ID를 중복해 넣는다.
+// 실제 방송국 ID를 공식 API 응답으로 검증한다. user/stationinfo 응답에 ID가
+// 없을 때에는 그 응답의 닉네임으로 SOOP 검색 API를 조회해 정확히 일치하는
+// 방송국 ID만 사용한다.
 func (r *Registry) exchangeSOOP(ctx context.Context, c Config, code string) (*UserInfo, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -88,11 +88,15 @@ func (r *Registry) exchangeSOOP(ctx context.Context, c Config, code string) (*Us
 		if id == "" {
 			id = soopIdentity(station.Data)
 		}
-		if id == "" {
-			id = soopProfileImageID(station.Data)
-		}
 		if v := soopNickname(station.Data); v != "" {
 			nickname = v
+		}
+	}
+	if id == "" && nickname != "" && c.SearchURL != "" {
+		var err error
+		id, err = r.resolveSOOPIdentityByNickname(ctx, c.SearchURL, nickname)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if id == "" {
@@ -119,6 +123,85 @@ func (r *Registry) exchangeSOOP(ctx context.Context, c Config, code string) (*Us
 			Scope: tok.Scope, ExpiresAt: time.Now().Add(time.Duration(expiresIn) * time.Second),
 		},
 	}, nil
+}
+
+// resolveSOOPIdentityByNickname는 OAuth로 검증된 방송국 정보의 닉네임만 검색한다.
+// 부분 일치 결과나 서로 다른 ID의 동명이인 후보가 있으면 계정을 임의로 고르지
+// 않고 실패한다. 프로필 이미지 URL처럼 선택적인 프로필 항목에는 의존하지 않는다.
+func (r *Registry) resolveSOOPIdentityByNickname(ctx context.Context, endpoint, nickname string) (string, error) {
+	nickname = strings.TrimSpace(nickname)
+	if nickname == "" {
+		return "", fmt.Errorf("SOOP 닉네임이 비어 있어 방송국 ID를 검색할 수 없습니다")
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("SOOP 방송국 검색 주소가 올바르지 않습니다: %w", err)
+	}
+	q := u.Query()
+	q.Set("m", "bjSearch")
+	q.Set("szKeyword", nickname)
+	q.Set("nPageNo", "1")
+	q.Set("nListCnt", "20")
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	// SOOP 검색 API는 브라우저가 아닌 기본 Go User-Agent 요청을 차단할 수 있다.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SoopTalent/1.0)")
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("SOOP 방송국 검색 실패: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("SOOP 방송국 검색 거부 (HTTP %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []struct {
+			UserID     string `json:"user_id"`
+			UserIDV2   string `json:"userId"`
+			UserNick   string `json:"user_nick"`
+			UserNickV2 string `json:"userNick"`
+		} `json:"DATA"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("SOOP 방송국 검색 응답 파싱: %w", err)
+	}
+	ids := map[string]struct{}{}
+	for _, candidate := range result.Data {
+		candidateNick := strings.TrimSpace(candidate.UserNick)
+		if candidateNick == "" {
+			candidateNick = strings.TrimSpace(candidate.UserNickV2)
+		}
+		// 검색 API의 부분 일치 결과는 절대 계정 식별에 쓰지 않는다.
+		if candidateNick != nickname {
+			continue
+		}
+		candidateID := strings.TrimSpace(candidate.UserID)
+		if candidateID == "" {
+			candidateID = strings.TrimSpace(candidate.UserIDV2)
+		}
+		if validSOOPID(candidateID) {
+			ids[candidateID] = struct{}{}
+		}
+	}
+	if len(ids) == 1 {
+		for id := range ids {
+			return id, nil
+		}
+	}
+	if len(ids) > 1 {
+		return "", fmt.Errorf("SOOP 닉네임 검색 결과가 여러 계정과 정확히 일치합니다; 방송국 ID를 안전하게 선택할 수 없습니다")
+	}
+	return "", fmt.Errorf("SOOP 닉네임과 정확히 일치하는 방송국 ID를 찾지 못했습니다")
 }
 
 type soopEnvelope struct {
@@ -163,29 +246,6 @@ func soopNickname(data json.RawMessage) string {
 		}
 	}
 	return ""
-}
-
-// soopProfileImageID는 SOOP이 user/stationinfo에서 반환하는 표준 프로필 주소
-// https://profile.img.sooplive.com/LOGO/{접두사}/{ID}/{ID}.jpg 형태만 받는다.
-// API 응답 자체가 OAuth 토큰 소유자에 묶여 있고, 호스트·경로·파일명까지 대조하므로
-// 브라우저나 확장이 전달한 임의 ID를 신뢰하는 경로가 아니다.
-func soopProfileImageID(data json.RawMessage) string {
-	raw := soopStringAt(data, "profile_image")
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.User != nil ||
-		!strings.EqualFold(u.Hostname(), "profile.img.sooplive.com") {
-		return ""
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 4 || parts[0] != "LOGO" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
-		return ""
-	}
-	id := parts[2]
-	filenameID := strings.TrimSuffix(parts[3], path.Ext(parts[3]))
-	if filenameID != id || !validSOOPID(id) {
-		return ""
-	}
-	return id
 }
 
 func validSOOPID(id string) bool {

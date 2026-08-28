@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -120,7 +119,7 @@ func TestSOOPExchange_방송국정보의CamelCaseID도받는다(t *testing.T) {
 	}
 }
 
-func TestSOOPExchange_방송국프로필주소의ID를검증한다(t *testing.T) {
+func TestSOOPExchange_방송국닉네임으로정확히일치하는ID를찾는다(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/token":
@@ -128,7 +127,14 @@ func TestSOOPExchange_방송국프로필주소의ID를검증한다(t *testing.T)
 		case "/live":
 			_, _ = w.Write([]byte(`{"result":1,"data":{"status":"offline"}}`))
 		case "/station":
-			_, _ = w.Write([]byte(`{"result":1,"data":{"user_nick":"케이지이지요","profile_image":"https://profile.img.sooplive.com/LOGO/li/lightstone1/lightstone1.jpg"}}`))
+			_, _ = w.Write([]byte(`{"result":1,"data":{"user_nick":"케이지이지요"}}`))
+		case "/search":
+			if req.Method != http.MethodGet || req.URL.Query().Get("m") != "bjSearch" ||
+				req.URL.Query().Get("szKeyword") != "케이지이지요" ||
+				req.URL.Query().Get("nPageNo") != "1" || req.URL.Query().Get("nListCnt") != "20" {
+				t.Errorf("잘못된 SOOP 검색 요청: %s", req.URL.String())
+			}
+			_, _ = w.Write([]byte(`{"DATA":[{"user_id":"similar","user_nick":"케이지"},{"user_id":"lightstone1","user_nick":"케이지이지요"}]}`))
 		default:
 			http.NotFound(w, req)
 		}
@@ -136,7 +142,7 @@ func TestSOOPExchange_방송국프로필주소의ID를검증한다(t *testing.T)
 	defer server.Close()
 
 	r := &Registry{publicURL: "https://service.example", http: server.Client(), configs: map[Provider]Config{
-		Soop: {ClientID: "client", ClientSecret: "secret", TokenURL: server.URL + "/token", UserInfoURL: server.URL + "/live", StationURL: server.URL + "/station"},
+		Soop: {ClientID: "client", ClientSecret: "secret", TokenURL: server.URL + "/token", UserInfoURL: server.URL + "/live", StationURL: server.URL + "/station", SearchURL: server.URL + "/search"},
 	}}
 	info, err := r.Exchange(context.Background(), Soop, "code", "")
 	if err != nil {
@@ -147,17 +153,14 @@ func TestSOOPExchange_방송국프로필주소의ID를검증한다(t *testing.T)
 	}
 }
 
-func TestSOOPProfileImageID_신뢰할수없는주소는거부(t *testing.T) {
-	for _, raw := range []string{
-		"http://profile.img.sooplive.com/LOGO/li/lightstone1/lightstone1.jpg",
-		"https://evil.example/LOGO/li/lightstone1/lightstone1.jpg",
-		"https://profile.img.sooplive.com/LOGO/li/lightstone1/other.jpg",
-		"https://profile.img.sooplive.com/LOGO/li/-1/-1.jpg",
-	} {
-		data := json.RawMessage(`{"profile_image":` + strconv.Quote(raw) + `}`)
-		if got := soopProfileImageID(data); got != "" {
-			t.Errorf("신뢰할 수 없는 프로필 주소가 ID로 처리됨: %s → %s", raw, got)
-		}
+func TestResolveSOOPIdentityByNickname_동명이인은거부한다(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{"DATA":[{"user_id":"first","user_nick":"같은닉"},{"user_id":"second","user_nick":"같은닉"}]}`))
+	}))
+	defer server.Close()
+	r := &Registry{http: server.Client()}
+	if _, err := r.resolveSOOPIdentityByNickname(context.Background(), server.URL, "같은닉"); err == nil {
+		t.Fatal("동명이인 검색 결과가 계정 식별에 사용됨")
 	}
 }
 

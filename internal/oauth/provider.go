@@ -58,6 +58,7 @@ type Config struct {
 	TokenURL     string
 	UserInfoURL  string
 	StationURL   string
+	SearchURL    string
 	Scopes       []string
 }
 
@@ -116,6 +117,7 @@ func NewRegistry(publicURL string) *Registry {
 				TokenURL:     "https://openapi.sooplive.com/auth/token",
 				UserInfoURL:  "https://openapi.sooplive.com/validate/live/status",
 				StationURL:   "https://openapi.sooplive.com/user/stationinfo",
+				SearchURL:    "https://sch.sooplive.com/api.php",
 				Scopes: []string{
 					"validate_live_status",
 					"user_stationinfo",
