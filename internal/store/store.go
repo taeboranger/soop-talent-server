@@ -205,15 +205,12 @@ func (s *Store) ChatEnabled(ctx context.Context, bid string) (bool, error) {
 	return on, err
 }
 func (s *Store) SetChatEnabled(ctx context.Context, bid string, on bool) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE streamers SET chat_enabled = $2 WHERE bid = $1`, bid, on)
-	if err != nil {
-		return err
-	}
-	n, _ := tag.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("등록되지 않은 방송국입니다: %s", bid)
-	}
-	return nil
+	// 기존 승인 계정은 streamers 행이 없을 수 있다. 채팅 스위치는 설정
+	// 자체이므로 행 유무와 관계없이 저장돼야 하며, 다음 기동 때 수집기가
+	// 같은 값을 읽어 그대로 반영한다.
+	_, err := s.Pool.Exec(ctx, `INSERT INTO streamers (bid, chat_enabled) VALUES ($1, $2)
+        ON DUPLICATE KEY UPDATE chat_enabled=VALUES(chat_enabled)`, bid, on)
+	return err
 }
 func (s *Store) StartBroadcast(ctx context.Context, bid, broadNo, title string) error {
 	n, err := strconv.ParseInt(broadNo, 10, 64)
