@@ -35,6 +35,8 @@ ENV LISTEN=:8080 \
     LOG_LEVEL=info \
     CHROMIUM_PATH=/usr/bin/chromium \
     SERVER_INTERNAL_URL=http://127.0.0.1:8080
-USER node
+# Kubernetes가 runAsNonRoot 정책을 이미지 단계에서 검증할 수 있도록
+# 이름(node) 대신 Node 공식 이미지의 숫자 UID:GID를 명시한다.
+USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["/app/sooptalent"]
