@@ -38,6 +38,14 @@ type StreamerHook interface {
 	Status(bid string) collector.Status
 }
 
+// OfficialChatHook은 공식 Chat SDK 브리지를 지원하는 수집기만 선택적으로 만족한다.
+// 기존 테스트·개발용 수집기 구현과의 호환성을 깨지 않는다.
+type OfficialChatHook interface {
+	PromoteOfficial(ctx context.Context, bid string)
+	IngestSDK(ctx context.Context, bid string, ev scoring.SDKEvent) error
+	SetSDKState(bid, phase, broadNo, detail, lastErr string)
+}
+
 type Server struct {
 	Store    *store.Store
 	Log      *slog.Logger
@@ -67,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	// 인증 불필요
 	mux.Handle("GET /api/health", s.h(s.handleHealth))
 	s.oauthRoutes(mux)
+	s.chatBridgeRoutes(mux)
 
 	// 로그인만 필요 (아직 승인 전이어도 접근 가능)
 	mux.Handle("POST /api/logout", s.session(s.handleLogout))
@@ -209,7 +218,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email": acct.Email, "isAdmin": acct.IsAdmin,
+		"soopId": acct.SoopID, "nickname": acct.Nickname,
+		"profileImage": acct.ProfileImageURL(), "isAdmin": acct.IsAdmin,
 		"approvedBid": bid, "claims": claims, "linkedProviders": linked,
 	})
 	return nil
@@ -228,7 +238,7 @@ func (s *Server) handleSubmitClaim(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	s.Log.Info("연결 신청", "account", accountOf(r).Email, "bid", c.BID, "status", c.Status)
+	s.Log.Info("연결 신청", "account", accountOf(r).SoopID, "bid", c.BID, "status", c.Status)
 	writeJSON(w, http.StatusOK, c)
 	return nil
 }
@@ -284,7 +294,7 @@ func (s *Server) handleAdminDecide(w http.ResponseWriter, r *http.Request) error
 			s.Streamer.Remove(c.BID)
 		}
 	}
-	s.Log.Info("신청 처리", "bid", c.BID, "status", c.Status, "admin", accountOf(r).Email)
+	s.Log.Info("신청 처리", "bid", c.BID, "status", c.Status, "admin", accountOf(r).SoopID)
 	writeJSON(w, http.StatusOK, c)
 	return nil
 }

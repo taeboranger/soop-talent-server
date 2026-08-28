@@ -44,7 +44,8 @@ type sessionJSON struct {
 	Tone      string     `json:"tone"`
 	Label     string     `json:"label"`
 	Detail    string     `json:"detail,omitempty"`
-	Email     string     `json:"email"`
+	UserID    string     `json:"userId"`
+	Nickname  string     `json:"nickname,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 	DaysLeft  int        `json:"daysLeft,omitempty"`
 }
@@ -63,6 +64,7 @@ type chatJSON struct {
 	Packets      int64      `json:"packets"`
 	LastError    string     `json:"lastError,omitempty"`
 	Retries      int        `json:"retries,omitempty"`
+	Source       string     `json:"source,omitempty"`
 }
 
 type statusJSON struct {
@@ -70,6 +72,7 @@ type statusJSON struct {
 	ServerTime time.Time     `json:"serverTime"`
 	Database   componentJSON `json:"database"`
 	Session    sessionJSON   `json:"session"`
+	SOOPAuth   componentJSON `json:"soopAuth"`
 	Chat       chatJSON      `json:"chat"`
 	Live       bool          `json:"live"`
 	// Overall은 위 항목 중 가장 나쁜 색이다. 배지 하나만 그릴 때 쓴다.
@@ -87,11 +90,25 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) error {
 		Chat:       s.chatStatus(bid),
 	}
 
-	_ = s.Store.Pool.QueryRow(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM broadcasts WHERE bid = $1 AND ended_at IS NULL)`,
-		bid).Scan(&out.Live)
+	if s.OAuth != nil && s.OAuth.HasSOOPToken(r.Context(), s.Store.Pool, bid) {
+		liveCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		if target, err := s.OAuth.AccessForBID(liveCtx, s.Store.Pool, bid); err != nil {
+			out.SOOPAuth = componentJSON{Tone: toneBad, Label: "재로그인 필요", Detail: err.Error()}
+		} else {
+			out.SOOPAuth = componentJSON{Tone: toneOK, Label: "공식 인증됨",
+				Detail: "OAuth 토큰 자동 갱신 사용 중 · " + target.ExpiresAt.Local().Format("2006-01-02 15:04") + "까지"}
+			out.Live, _ = s.OAuth.LiveForBID(liveCtx, s.Store.Pool, bid)
+		}
+		cancel()
+	} else {
+		out.SOOPAuth = componentJSON{Tone: toneWarn, Label: "SOOP 로그인 필요",
+			Detail: "SOOP으로 다시 로그인하면 공식 채팅 연동으로 전환됩니다."}
+		_ = s.Store.Pool.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM broadcasts WHERE bid = $1 AND ended_at IS NULL)`,
+			bid).Scan(&out.Live)
+	}
 
-	out.Overall = worstTone(out.Database.Tone, out.Session.Tone, out.Chat.Tone)
+	out.Overall = worstTone(out.Database.Tone, out.Session.Tone, out.SOOPAuth.Tone, out.Chat.Tone)
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }
@@ -166,7 +183,8 @@ func (s *Server) sessionStatus(r *http.Request) sessionJSON {
 	acct := accountOf(r)
 	out := sessionJSON{Tone: toneOK, Label: "로그인 중"}
 	if acct != nil {
-		out.Email = acct.Email
+		out.UserID = acct.SoopID
+		out.Nickname = acct.Nickname
 	}
 
 	exp, err := auth.SessionExpiry(r.Context(), s.Store.Pool, sessionToken(r))
@@ -203,6 +221,11 @@ func (s *Server) chatStatus(bid string) chatJSON {
 		Since:        nonZero(st.Chat.Since),
 		ConnectedAt:  nonZero(st.Chat.ConnectedAt),
 		LastPacketAt: nonZero(st.Chat.LastPacket),
+	}
+	if st.Official {
+		out.Source = "SOOP 공식 Chat SDK"
+	} else {
+		out.Source = "레거시 채팅 폴백"
 	}
 
 	switch {

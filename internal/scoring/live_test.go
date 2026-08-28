@@ -1,8 +1,9 @@
 package scoring
 
 import (
-	"log/slog"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -14,6 +15,61 @@ func newTestLive() *Live {
 	l := NewLive("243000", nil, log, DefaultRules())
 	l.SetBroadcast("296249615")
 	return l
+}
+
+func sdkEvent(id, action, body string) SDKEvent {
+	return SDKEvent{ID: id, Action: action, BroadNo: "296249615", Message: json.RawMessage(body)}
+}
+
+func TestSDK_채팅후원팬가입구독(t *testing.T) {
+	l := newTestLive()
+	now := time.Now()
+	chat := l.HandleSDK(sdkEvent("chat-1", "MESSAGE", `{"userId":"viewer","userNickname":"시청자","message":"안녕하세요"}`), now)
+	if len(chat) != 1 || chat[0].Kind != KindChat || chat[0].IdemKey != "sdk:chat-1:chat" {
+		t.Fatalf("공식 채팅 적립=%+v", chat)
+	}
+	donation := l.HandleSDK(sdkEvent("gift-1", "BALLOON_GIFTED", `{"userId":"supporter","userNickname":"후원자","count":10,"fanNumber":42}`), now)
+	if len(donation) != 2 || donation[0].Kind != KindDonation || donation[1].Kind != KindFanclub {
+		t.Fatalf("후원+신규 팬가입 적립=%+v", donation)
+	}
+	if donation[0].Amount != 10*DefaultRules().Donation.StarBalloonRate {
+		t.Errorf("후원 환산=%d", donation[0].Amount)
+	}
+	renew := l.HandleSDK(sdkEvent("sub-1", "SUBSCRIPTION_RENEWED", `{"userId":"subscriber","subscriptionMonths":6}`), now)
+	want := DefaultRules().Subscribe.Base + 6*DefaultRules().Subscribe.PerMonth
+	if len(renew) != 1 || renew[0].Amount != want {
+		t.Fatalf("연속 구독 적립=%+v want=%d", renew, want)
+	}
+	gift := l.HandleSDK(sdkEvent("sub-gift", "SUBSCRIPTION_GIFTED", `{"userId":"giver","receiverId":"receiver","type":"GIFT_90"}`), now)
+	if len(gift) != 1 || gift[0].UserID != "giver" {
+		t.Fatalf("구독 선물 구매자 적립=%+v", gift)
+	}
+}
+
+func TestSDK_IN_OUT_체류는공식퇴장까지유지(t *testing.T) {
+	l := newTestLive()
+	start := time.Now()
+	l.HandleSDK(sdkEvent("in", "IN", `{"userList":[{"userId":"viewer","userNickname":"시청자"}]}`), start)
+	// 비공개 목록 방식의 graceSeconds를 지나도 공식 IN 상태는 유지된다.
+	if got := l.CollectStayTicks(start.Add(11 * time.Minute)); len(got) != 1 {
+		t.Fatalf("공식 체류 적립=%d건, want 1", len(got))
+	}
+	l.HandleSDK(sdkEvent("out", "OUT", `{"userList":[{"userId":"viewer"}]}`), start.Add(12*time.Minute))
+	if _, ok := l.seen["viewer"]; ok {
+		t.Fatal("공식 OUT 뒤 체류 상태가 남아 있음")
+	}
+}
+
+func TestSDK_JOIN과BJ채팅은스트리머본인에게적립하지않음(t *testing.T) {
+	l := newTestLive()
+	now := time.Now()
+	l.HandleSDK(sdkEvent("join", "JOIN", `{"userId":"243000","userNickname":"스트리머"}`), now)
+	if _, exists := l.seen["243000"]; exists {
+		t.Fatal("SDK 자신의 JOIN을 시청자로 기록함")
+	}
+	if got := l.HandleSDK(sdkEvent("bj-chat", "MESSAGE", `{"userId":"243000","message":"방송자 채팅"}`), now); len(got) != 0 {
+		t.Fatalf("스트리머 본인 채팅에 달란트 %d건 적립", len(got))
+	}
 }
 
 func chatPkt(userID, nick, msg string, weeks int) soop.Packet {
@@ -64,55 +120,19 @@ func TestChat_짧은메시지제외(t *testing.T) {
 	}
 }
 
-// 첫 관측을 가입으로 오인하면 기존 팬 전원에게 달란트가 나간다.
-func TestFanclub_첫관측은적립안함(t *testing.T) {
+func TestFanclub_적립비활성(t *testing.T) {
 	l := newTestLive()
 	now := time.Now()
 
-	// 이미 45주차인 사람이 처음 보임 → 기준선만 기록
-	// (채팅 달란트는 별도로 나가므로 팬클럽 이벤트만 센다)
-	if got := countKind(l.Handle(chatPkt("oldfan", "고인물", "안녕하세요", 45), now), KindFanclub); got != 0 {
-		t.Fatalf("기존 팬에게 가입 달란트가 나감 (%d건)", got)
-	}
-	// 계속 팬이어도 적립 없음
-	if got := countKind(l.Handle(chatPkt("oldfan", "고인물", "반갑습니다", 46), now), KindFanclub); got != 0 {
-		t.Errorf("주차 증가에 달란트가 나감 (%d건)", got)
-	}
-}
-
-func countKind(events []Event, kind string) int {
-	n := 0
-	for _, e := range events {
-		if e.Kind == kind {
-			n++
+	// 채팅에 팬클럽 주차가 실려 와도 채팅 달란트만 처리한다.
+	for _, event := range l.Handle(chatPkt("newbie", "뉴비", "가입했어요", 1), now) {
+		if event.Kind == KindFanclub {
+			t.Fatal("팬가입 달란트가 생성됨")
 		}
 	}
-	return n
-}
-
-func TestFanclub_전환시적립(t *testing.T) {
-	l := newTestLive()
-	now := time.Now()
-
-	// 미가입 상태로 먼저 관측
-	l.Handle(chatPkt("newbie", "뉴비", "안녕하세요", -1), now)
-	// 가입 → 적립
-	events := l.Handle(chatPkt("newbie", "뉴비", "가입했어요", 1), now)
-
-	var found *Event
-	for i := range events {
-		if events[i].Kind == KindFanclub {
-			found = &events[i]
-		}
-	}
-	if found == nil {
-		t.Fatal("팬클럽 가입이 적립되지 않음")
-	}
-	if found.Amount != DefaultRules().Fanclub.JoinPoints {
-		t.Errorf("가입 달란트 = %d, want %d", found.Amount, DefaultRules().Fanclub.JoinPoints)
-	}
-	if found.IdemKey != "fanclub:newbie" {
-		t.Errorf("멱등키 = %q", found.IdemKey)
+	// 0127 상태 목록도 처리하지 않는다.
+	if got := l.Handle(soop.Packet{Svc: soop.SvcFanclub}, now); len(got) != 0 {
+		t.Fatalf("팬클럽 상태 패킷에서 이벤트 %d건 생성됨", len(got))
 	}
 }
 
@@ -256,21 +276,5 @@ func TestDonation_아이템별환산(t *testing.T) {
 	want := 10 * DefaultRules().Donation.StarBalloonRate
 	if events[0].Amount != want {
 		t.Errorf("별풍선 달란트 = %d, want %d", events[0].Amount, want)
-	}
-}
-
-func TestParseFW(t *testing.T) {
-	cases := map[string]int{
-		"fw=45&afw=45": 45,
-		"fw=-1&afw=-1": -1,
-		"fw=0&afw=0":   0,
-		"afw=30":       -1, // afw만 있으면 미가입 취급
-		"":             -1,
-		"garbage":      -1,
-	}
-	for in, want := range cases {
-		if got := parseFW(in); got != want {
-			t.Errorf("parseFW(%q) = %d, want %d", in, got, want)
-		}
 	}
 }

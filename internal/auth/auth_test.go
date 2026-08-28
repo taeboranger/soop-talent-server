@@ -68,3 +68,13 @@ func TestPasswordRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileImageURL(t *testing.T) {
+	if got, want := (Account{SoopID: "lightstone1"}).ProfileImageURL(),
+		"https://profile.img.sooplive.com/LOGO/li/lightstone1/lightstone1.jpg"; got != want {
+		t.Fatalf("프로필 주소 = %q, want %q", got, want)
+	}
+	if got := (Account{}).ProfileImageURL(); got != "" {
+		t.Fatalf("빈 SOOP ID의 프로필 주소 = %q", got)
+	}
+}

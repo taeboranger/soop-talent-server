@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -49,9 +50,13 @@ const (
 )
 
 type Account struct {
-	ID      int64
-	Email   string
-	IsAdmin bool
+	ID int64
+	// Email은 과거 일반 OAuth 계정과의 호환용이다. SOOP 로그인 경로에서는
+	// 저장하거나 API로 내보내지 않는다.
+	Email    string
+	SoopID   string
+	Nickname string
+	IsAdmin  bool
 }
 
 // ---------------------------------------------------------------------------
@@ -186,19 +191,18 @@ func hashToken(t string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func issueSession(ctx context.Context, pool *store.DB, accountID int64, ua string) (string, error) {
+func issueSession(ctx context.Context, pool *store.DB, accountID int64, _ string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := hex.EncodeToString(raw)
-	if len(ua) > 200 {
-		ua = ua[:200]
-	}
+	// 로그인에 브라우저 정보는 필요하지 않다. 계정 식별 정보는 SOOP ID와
+	// 닉네임으로 한정하고, 세션에는 인증에 필요한 값만 저장한다.
 	_, err := pool.Exec(ctx, `
-		INSERT INTO sessions (token_hash, account_id, expires_at, user_agent)
-		VALUES ($1, $2, DATE_ADD(NOW(6), INTERVAL $3 SECOND), $4)`,
-		hashToken(token), accountID, int(SessionTTL.Seconds()), ua)
+		INSERT INTO sessions (token_hash, account_id, expires_at)
+		VALUES ($1, $2, DATE_ADD(NOW(6), INTERVAL $3 SECOND))`,
+		hashToken(token), accountID, int(SessionTTL.Seconds()))
 	if err != nil {
 		return "", err
 	}
@@ -217,10 +221,13 @@ func Resolve(ctx context.Context, pool *store.DB, token string) (*Account, error
 		expires  time.Time
 	)
 	err := pool.QueryRow(ctx, `
-		SELECT a.id, a.email, a.is_admin, a.disabled, s.expires_at
-		  FROM sessions s JOIN accounts a ON a.id = s.account_id
+		SELECT a.id, COALESCE(a.email, ''), a.is_admin, a.disabled, s.expires_at,
+		       COALESCE(o.provider_user_id,''), COALESCE(o.nickname,'')
+		  FROM sessions s
+		  JOIN accounts a ON a.id = s.account_id
+		  LEFT JOIN oauth_identities o ON o.account_id = a.id AND o.provider = 'soop'
 		 WHERE s.token_hash = $1 AND s.expires_at > now()`, hashToken(token)).
-		Scan(&a.ID, &a.Email, &a.IsAdmin, &disabled, &expires)
+		Scan(&a.ID, &a.Email, &a.IsAdmin, &disabled, &expires, &a.SoopID, &a.Nickname)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSession
@@ -241,6 +248,20 @@ func Resolve(ctx context.Context, pool *store.DB, token string) (*Account, error
 			hashToken(token))
 	}
 	return &a, nil
+}
+
+// ProfileImageURL은 SOOP이 공개적으로 제공하는 프로필 이미지 주소를 즉석에서
+// 만든다. DB에는 이메일이나 이미지 URL을 저장하지 않고, SOOP ID와 닉네임만
+// 계정 식별 정보로 남긴다.
+func (a Account) ProfileImageURL() string {
+	id := strings.TrimSpace(a.SoopID)
+	if id == "" {
+		return ""
+	}
+	r := []rune(id)
+	prefix := strings.ToLower(string(r[:min(2, len(r))]))
+	return "https://profile.img.sooplive.com/LOGO/" +
+		url.PathEscape(prefix) + "/" + url.PathEscape(id) + "/" + url.PathEscape(id) + ".jpg"
 }
 
 // SessionExpiry는 지금 세션이 언제 끊기는지 알려 준다.

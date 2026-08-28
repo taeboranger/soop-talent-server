@@ -1,4 +1,4 @@
-// Package oauth는 Google / Naver / Kakao 소셜 로그인을 다룬다.
+// Package oauth는 Google / Naver / Kakao / SOOP 로그인을 다룬다.
 //
 // 자격증명은 전부 환경변수에서 읽는다. 설정되지 않은 제공자는 비활성 상태가 되고,
 // 확장에는 사용 가능한 제공자만 노출된다.
@@ -8,10 +8,12 @@
 //	{PUBLIC_URL}/api/oauth/google/callback
 //	{PUBLIC_URL}/api/oauth/naver/callback
 //	{PUBLIC_URL}/api/oauth/kakao/callback
+//	{PUBLIC_URL}/api/oauth/soop/callback
 package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +31,7 @@ const (
 	Google Provider = "google"
 	Naver  Provider = "naver"
 	Kakao  Provider = "kakao"
+	Soop   Provider = "soop"
 )
 
 // UserInfo는 제공자마다 다른 응답을 통일한 형태다.
@@ -37,6 +41,14 @@ type UserInfo struct {
 	Email         string
 	EmailVerified bool
 	Nickname      string
+	Tokens        *TokenSet // SOOP Chat SDK에 필요한 장기 세션. 다른 제공자는 nil이다.
+}
+
+type TokenSet struct {
+	AccessToken  string
+	RefreshToken string
+	Scope        string
+	ExpiresAt    time.Time
 }
 
 type Config struct {
@@ -45,6 +57,7 @@ type Config struct {
 	AuthURL      string
 	TokenURL     string
 	UserInfoURL  string
+	StationURL   string
 	Scopes       []string
 }
 
@@ -55,6 +68,8 @@ type Registry struct {
 	configs   map[Provider]Config
 	publicURL string
 	http      *http.Client
+	tokenKey  []byte
+	refreshMu sync.Mutex
 }
 
 // NewRegistry는 환경변수에서 자격증명을 읽는다.
@@ -62,11 +77,14 @@ type Registry struct {
 //	GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
 //	NAVER_CLIENT_ID  / NAVER_CLIENT_SECRET
 //	KAKAO_CLIENT_ID  / KAKAO_CLIENT_SECRET
+//	SOOP_CLIENT_ID   / SOOP_CLIENT_SECRET
 //	PUBLIC_URL       콜백 주소를 만들 때 쓰는 서버 공개 주소
 func NewRegistry(publicURL string) *Registry {
+	key, _ := decodeTokenKey(os.Getenv("SOOP_TOKEN_ENCRYPTION_KEY"))
 	return &Registry{
 		publicURL: strings.TrimRight(publicURL, "/"),
 		http:      &http.Client{Timeout: 15 * time.Second},
+		tokenKey:  key,
 		configs: map[Provider]Config{
 			Google: {
 				ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
@@ -91,24 +109,52 @@ func NewRegistry(publicURL string) *Registry {
 				UserInfoURL:  "https://kapi.kakao.com/v2/user/me",
 				Scopes:       []string{"account_email"},
 			},
+			Soop: {
+				ClientID:     os.Getenv("SOOP_CLIENT_ID"),
+				ClientSecret: os.Getenv("SOOP_CLIENT_SECRET"),
+				AuthURL:      "https://openapi.sooplive.com/auth/code",
+				TokenURL:     "https://openapi.sooplive.com/auth/token",
+				UserInfoURL:  "https://openapi.sooplive.com/validate/live/status",
+				StationURL:   "https://openapi.sooplive.com/user/stationinfo",
+				Scopes: []string{
+					"validate_live_status",
+					"user_stationinfo",
+					"broad_access_chatinfo",
+				},
+			},
 		},
 	}
 }
+
+func decodeTokenKey(raw string) ([]byte, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("SOOP_TOKEN_ENCRYPTION_KEY가 비어 있습니다")
+	}
+	key, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		key, err = base64.RawStdEncoding.DecodeString(raw)
+	}
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("SOOP_TOKEN_ENCRYPTION_KEY는 base64 인코딩한 32바이트여야 합니다")
+	}
+	return key, nil
+}
+
+func (r *Registry) SOOPTokenStorageReady() bool { return len(r.tokenKey) == 32 }
 
 func (r *Registry) Config(p Provider) (Config, bool) {
 	c, ok := r.configs[p]
 	return c, ok && c.Enabled()
 }
 
-// Enabled는 사용 가능한 제공자 목록이다. 확장이 버튼을 그릴 때 쓴다.
+// Enabled는 SOOP 공식 OAuth만 노출한다. 이 서비스의 계정 식별자는 SOOP ID이며,
+// 이메일 기반 소셜 로그인을 함께 노출하면 이메일을 저장하지 않는다는 정책과 맞지 않는다.
 func (r *Registry) Enabled() []Provider {
-	var out []Provider
-	for _, p := range []Provider{Google, Naver, Kakao} {
-		if c, ok := r.configs[p]; ok && c.Enabled() {
-			out = append(out, p)
-		}
+	if c, ok := r.configs[Soop]; ok && c.Enabled() {
+		return []Provider{Soop}
 	}
-	return out
+	return nil
 }
 
 func (r *Registry) CallbackURL(p Provider) string {
@@ -120,6 +166,16 @@ func (r *Registry) AuthCodeURL(p Provider, state string) (string, error) {
 	c, ok := r.Config(p)
 	if !ok {
 		return "", fmt.Errorf("%s 로그인이 설정되지 않았습니다", p)
+	}
+	// SOOP은 등록된 Redirect URL로 code를 보내며, 공식 auth/code 명세에는
+	// response_type·redirect_uri·state가 없다. state는 서버의 HttpOnly 쿠키와
+	// DB에 따로 묶어 콜백에서 1회만 소비한다.
+	if p == Soop {
+		q := url.Values{"client_id": {c.ClientID}}
+		if len(c.Scopes) > 0 {
+			q.Set("scope", strings.Join(c.Scopes, " "))
+		}
+		return c.AuthURL + "?" + q.Encode(), nil
 	}
 	q := url.Values{
 		"client_id":     {c.ClientID},
@@ -138,6 +194,9 @@ func (r *Registry) Exchange(ctx context.Context, p Provider, code, state string)
 	c, ok := r.Config(p)
 	if !ok {
 		return nil, fmt.Errorf("%s 로그인이 설정되지 않았습니다", p)
+	}
+	if p == Soop {
+		return r.exchangeSOOP(ctx, c, code)
 	}
 
 	form := url.Values{
@@ -274,6 +333,9 @@ func (r *Registry) fetchUser(ctx context.Context, p Provider, c Config, accessTo
 			EmailVerified: k.KakaoAccount.EmailValid && k.KakaoAccount.EmailVerified,
 			Nickname:      k.KakaoAccount.Profile.Nickname,
 		}, nil
+
+	case Soop:
+		return nil, fmt.Errorf("SOOP 사용자 정보는 전용 POST 흐름으로 조회해야 합니다")
 	}
 	return nil, fmt.Errorf("알 수 없는 제공자: %s", p)
 }
@@ -286,6 +348,8 @@ func Parse(s string) (Provider, bool) {
 		return Naver, true
 	case Kakao:
 		return Kakao, true
+	case Soop:
+		return Soop, true
 	}
 	return "", false
 }
@@ -298,6 +362,8 @@ func (p Provider) Label() string {
 		return "네이버"
 	case Kakao:
 		return "카카오"
+	case Soop:
+		return "SOOP"
 	}
 	return string(p)
 }

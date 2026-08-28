@@ -6,7 +6,7 @@
 // 환경변수:
 //
 //	DATABASE_URL    DB DSN (필수)
-//	ADMIN_EMAILS    OAuth 로그인 뒤 관리자 권한을 줄 이메일. 쉼표 구분.
+//	ADMIN_SOOP_IDS  SOOP OAuth 로그인 뒤 관리자 권한을 줄 SOOP ID. 쉼표 구분.
 //	LISTEN          HTTP 바인드 주소 (기본 :8080)
 //	MIGRATIONS      마이그레이션 디렉터리 (기본 ./migrations)
 //	LOG_LEVEL       debug|info|warn|error (기본 info)
@@ -93,6 +93,9 @@ func main() {
 	// 각 제공자 콘솔에 {PUBLIC_URL}/api/oauth/{provider}/callback 을 등록해야 한다.
 	publicURL := envOr("PUBLIC_URL", "http://localhost"+listen)
 	reg := oauth.NewRegistry(publicURL)
+	if _, ok := reg.Config(oauth.Soop); ok && !reg.SOOPTokenStorageReady() {
+		log.Error("SOOP_TOKEN_ENCRYPTION_KEY가 없어 공식 채팅 OAuth 토큰을 저장할 수 없습니다")
+	}
 	if enabled := reg.Enabled(); len(enabled) > 0 {
 		for _, p := range enabled {
 			log.Info("소셜 로그인 활성", "provider", p, "callback", reg.CallbackURL(p))
@@ -133,16 +136,26 @@ func main() {
 	log.Info("종료 완료")
 }
 
-// configureAdmins는 ADMIN_EMAILS에 든 이메일로 OAuth 로그인한 계정에 관리자
-// 권한을 준다. 계정을 미리 만들지 않으므로 비밀번호나 별도 관리자 가입은 없다.
+// configureAdmins는 ADMIN_SOOP_IDS에 든 SOOP ID로 공식 OAuth 로그인한 계정에
+// 관리자 권한을 준다. 계정을 미리 만들지 않으므로 별도 관리자 가입은 없다.
 func configureAdmins(ctx context.Context, st *store.Store, log *slog.Logger) {
-	emails := splitCSV(os.Getenv("ADMIN_EMAILS"))
-	auth.SetAdminEmails(emails)
-	if len(emails) == 0 {
-		log.Warn("관리자 이메일이 없습니다. ADMIN_EMAILS를 설정하세요")
+	ids := splitCSV(os.Getenv("ADMIN_SOOP_IDS"))
+	auth.SetAdminSOOPIDs(ids)
+	if len(ids) == 0 {
+		log.Warn("관리자 SOOP ID가 없습니다. ADMIN_SOOP_IDS를 설정하세요")
 		return
 	}
-	log.Info("OAuth 관리자 이메일 설정", "count", len(emails))
+	// 이미 로그인해 둔 계정도 다음 로그인까지 기다리지 않도록 바로 승격한다.
+	// ID 값은 운영자가 정한 환경변수이고, 브라우저 요청값은 여기 쓰이지 않는다.
+	for _, id := range ids {
+		if _, err := st.Pool.Exec(ctx, `
+			UPDATE accounts a JOIN oauth_identities o ON o.account_id = a.id
+			   SET a.is_admin = TRUE
+			 WHERE o.provider = 'soop' AND lower(o.provider_user_id) = lower($1)`, id); err != nil {
+			log.Warn("관리자 SOOP ID 적용 실패", "err", err)
+		}
+	}
+	log.Info("OAuth 관리자 SOOP ID 설정", "count", len(ids))
 }
 
 // purgeSessionsLoop은 만료된 세션을 주기적으로 지운다.

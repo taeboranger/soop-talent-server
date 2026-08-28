@@ -16,21 +16,23 @@ import (
 
 var ErrBadState = apperr.New("인증 요청이 만료되었거나 올바르지 않습니다")
 
-// adminEmails는 서버 기동 시 ADMIN_EMAILS로 설정한다. OAuth 제공자가 검증했다고
-// 알려 준 이메일만 이 목록과 비교한다. 클라이언트가 보낸 이메일은 쓰지 않는다.
-var adminEmails = map[string]struct{}{}
+// adminSOOPIDs는 서버 기동 시 ADMIN_SOOP_IDS로 설정한다. 공식 OAuth에서
+// 검증한 SOOP ID와만 비교하므로 브라우저가 보낸 값으로 관리자 권한을 얻을 수 없다.
+var adminSOOPIDs = map[string]struct{}{}
 
-func SetAdminEmails(emails []string) {
-	adminEmails = make(map[string]struct{}, len(emails))
-	for _, email := range emails {
-		if email = NormalizeEmail(email); email != "" {
-			adminEmails[email] = struct{}{}
+func SetAdminSOOPIDs(ids []string) {
+	adminSOOPIDs = make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id = NormalizeSOOPID(id); id != "" {
+			adminSOOPIDs[id] = struct{}{}
 		}
 	}
 }
 
-func IsAdminEmail(email string) bool {
-	_, ok := adminEmails[NormalizeEmail(email)]
+func NormalizeSOOPID(id string) string { return strings.ToLower(strings.TrimSpace(id)) }
+
+func IsAdminSOOPID(id string) bool {
+	_, ok := adminSOOPIDs[NormalizeSOOPID(id)]
 	return ok
 }
 
@@ -191,15 +193,6 @@ func LoginWithSocial(ctx context.Context, pool *store.DB, su SocialUser, userAge
 
 	if err := tx.Commit(ctx); err != nil {
 		return "", nil, err
-	}
-
-	// 지정 이메일의 실제 소유자만 관리자다. 검증되지 않은 제공자 프로필의
-	// 이메일 문자열만으로 권한을 얻지 못하게 EmailVerified를 반드시 확인한다.
-	if su.EmailVerified && IsAdminEmail(su.Email) {
-		if _, err := pool.Exec(ctx, `UPDATE accounts SET is_admin = TRUE WHERE id = $1`, a.ID); err != nil {
-			return "", nil, err
-		}
-		a.IsAdmin = true
 	}
 
 	token, err = issueSession(ctx, pool, a.ID, userAgent)

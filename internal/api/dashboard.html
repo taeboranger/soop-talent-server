@@ -62,6 +62,11 @@
   button.primary { background:var(--accent); border-color:var(--accent);
                    color:var(--accent-fg); font-weight:600; }
   button.primary:hover:not(:disabled) { filter:brightness(1.08); background:var(--accent); }
+  button.oauth-soop { display:inline-flex; align-items:center; justify-content:center; gap:9px;
+                      min-height:42px; background:#087fc2; border-color:#087fc2; }
+  button.oauth-soop:hover:not(:disabled) { background:#087fc2; }
+  .soop-mark { width:22px; height:22px; display:inline-grid; place-items:center; flex:0 0 22px; }
+  .soop-mark svg { width:22px; height:22px; display:block; }
   button.danger { color:var(--bad); border-color:var(--bad); }
   button.sm { padding:4px 9px; font-size:12.5px; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -70,6 +75,10 @@
           border-radius:var(--r); padding:16px; }
   .stack { display:flex; flex-direction:column; gap:12px; }
   .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .account { display:inline-flex; align-items:center; gap:7px; min-width:0; }
+  .account .avatar { width:27px; height:27px; border-radius:50%; object-fit:cover;
+                     border:1px solid var(--line); background:var(--bg-inset); }
+  .account .name { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
 
   .notice { border-radius:6px; padding:10px 13px; margin:12px 0; font-size:13px; }
@@ -206,7 +215,10 @@
     <div class="row" id="whoami" hidden>
       <a class="small" href="/guide" target="_blank">사용 가이드</a>
       <a class="small" href="/privacy" target="_blank">개인정보처리방침</a>
-      <span class="small muted" id="meLabel"></span>
+      <span class="account small" id="meAccount">
+        <img class="avatar" id="meAvatar" alt="" hidden>
+        <span class="name" id="meLabel"></span>
+      </span>
       <span class="badge info" id="bidBadge" hidden></span>
       <button class="sm" id="logout">로그아웃</button>
     </div>
@@ -230,8 +242,8 @@
       <h2>스트리머 연결이 필요합니다</h2>
       <div id="claimStatus"></div>
       <p class="muted small" style="margin:0">
-        확장 프로그램에서 SOOP 계정으로 연결을 신청하면 운영자가 확인 후 승인합니다.
-        승인되면 이 화면에서 달란트 기준과 달란트 시장을 관리할 수 있습니다.
+        SOOP 로그인으로 방송국을 자동 연결할 수 있습니다. 로그인한 계정의 방송국이 확인되면
+        이 화면에서 달란트 기준과 달란트 시장을 관리할 수 있습니다.
       </p>
     </div>
   </section>
@@ -394,14 +406,14 @@
       </div>
 
       <div class="card stack">
-        <h3>후원 · 구독 · 팬클럽</h3>
+        <h3>후원 · 구독</h3>
         <div class="rule-grid">
           <span>별풍선 1개당</span><span><input type="number" id="donation.starBalloonRate" min="0" max="10000"> 달란트</span>
           <span>애드벌룬 1개당</span><span><input type="number" id="donation.adBalloonRate" min="0" max="10000"> 달란트</span>
           <span>구독 기본</span><span><input type="number" id="subscribe.base" min="0" max="100000"> 달란트</span>
           <span>구독 개월당</span><span><input type="number" id="subscribe.perMonth" min="0" max="10000"> 달란트</span>
           <span>개월 수 상한</span><span><input type="number" id="subscribe.maxMonths" min="1" max="600"> 개월</span>
-          <span>팬클럽 가입</span><span><input type="number" id="fanclub.joinPoints" min="0" max="100000"> 달란트</span>
+          <span>팬클럽 신규 가입</span><span><input type="number" id="fanclub.joinPoints" min="0" max="100000"> 달란트</span>
         </div>
       </div>
 
@@ -472,6 +484,15 @@ function el(tag, props = {}, ...kids) {
   return e;
 }
 
+function soopMark() {
+  const mark = document.createElement("span");
+  mark.className = "soop-mark";
+  mark.setAttribute("aria-hidden", "true");
+  // 외부 이미지를 불러오지 않는 작은 SOOP 로그인 표식이다.
+  mark.innerHTML = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.2 8.35c0-2.43 1.97-4.4 4.4-4.4h6.8c2.43 0 4.4 1.97 4.4 4.4v4.1c0 2.43-1.97 4.4-4.4 4.4H10.7L6.2 20.1v-3.76a4.39 4.39 0 0 1-2-3.7v-4.3Z" fill="currentColor"/><circle cx="9" cy="10.2" r="1.45" fill="#087fc2"/><circle cx="15" cy="10.2" r="1.45" fill="#087fc2"/><path d="M9.2 13.1c1.65 1.08 3.95 1.08 5.6 0" stroke="#087fc2" stroke-width="1.35" stroke-linecap="round"/></svg>`;
+  return mark;
+}
+
 // ── 인증 ─────────────────────────────────────────────────────────────
 function signOut() {
   token = ""; me = null;
@@ -492,14 +513,17 @@ async function loadProviders() {
     const list = await fetch("/api/oauth/providers").then((r) => r.json());
     if (!list?.length) { $("socialHelp").hidden = false; return; }
     for (const p of list) {
-      box.append(el("button", {
-        text: `${p.label}로 계속하기`,
+      const button = el("button", {
+        class: p.id === "soop" ? "primary oauth-soop" : "primary",
         onclick: () => {
           // 웹에서는 서버 콜백이 이 페이지로 되돌아온다.
           const back = location.origin + "/";
           location.href = `/api/oauth/${p.id}/start?redirect_uri=${encodeURIComponent(back)}`;
         },
-      }));
+      });
+      if (p.id === "soop") button.append(soopMark(), document.createTextNode("SOOP로 계속하기"));
+      else button.textContent = `${p.label}로 계속하기`;
+      box.append(button);
     }
   } catch { /* 소셜 로그인 미설정 */ }
 }
@@ -570,9 +594,11 @@ function renderConn(s) {
         ? `${fmtDate(s.session.expiresAt)}까지 (${fmtNum(s.session.daysLeft)}일 남음)`
         : "");
 
+  connRow("SOOP 계정", s.soopAuth.tone, s.soopAuth.label, s.soopAuth.detail || "");
+
   // 채팅 연동 — 여기서만 켜고 끌 수 있다
   const c = s.chat;
-  const bits = [c.detail];
+  const bits = [c.source, c.detail];
   if (c.broadNo) bits.push(`방송 ${c.broadNo}`);
   if (c.lastPacketAt) bits.push(`마지막 수신 ${ago(c.lastPacketAt)}`);
   if (c.packets) bits.push(`누적 ${fmtNum(c.packets)}건`);
@@ -1059,7 +1085,8 @@ const FIELD_IDS = [
   "rank.topPoints","rank.enableWatch","rank.enableChat",
   "donation.starBalloonRate","donation.adBalloonRate",
   "subscribe.base","subscribe.perMonth","subscribe.maxMonths",
-  "fanclub.joinPoints","manual.postPoints","manual.commentPoints",
+  "fanclub.joinPoints",
+  "manual.postPoints","manual.commentPoints",
 ];
 const getPath = (o, p) => p.split(".").reduce((x, k) => x?.[k], o);
 function setPath(o, p, v) {
@@ -1106,7 +1133,11 @@ async function start() {
   } catch { signOut(); return; }
 
   $("authView").hidden = true;
-  $("meLabel").textContent = me.email || "(이메일 없음)";
+  $("meLabel").textContent = me.nickname || me.soopId || "SOOP 사용자";
+  const avatar = $("meAvatar");
+  avatar.hidden = !me.profileImage;
+  avatar.onerror = () => { avatar.hidden = true; };
+  if (me.profileImage) avatar.src = me.profileImage;
   $("whoami").hidden = false;
 
   if (!me.approvedBid) {
@@ -1147,7 +1178,7 @@ async function start() {
     localStorage.setItem(KEY, t);
     // 안내 완료 여부는 서버 계정이 아니라 이 브라우저에만 저장한다.
     // 따라서 새 기기·새 브라우저에서 로그인하면 가이드를 다시 볼 수 있다.
-    const identity = (frag.get("email") || "unknown").toLowerCase();
+    const identity = (frag.get("id") || "unknown").toLowerCase();
     const welcomeKey = `sooptalent.welcomeSeen.${identity}`;
     if (!localStorage.getItem(welcomeKey)) {
       location.replace(`/welcome#token=${encodeURIComponent(t)}&welcome_key=${encodeURIComponent(welcomeKey)}`);

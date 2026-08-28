@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,6 +55,9 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) error 
 	if !ok {
 		return httpError{http.StatusNotFound, "알 수 없는 로그인 제공자입니다."}
 	}
+	if p != oauth.Soop {
+		return httpError{http.StatusNotFound, "SOOP 로그인만 사용할 수 있습니다."}
+	}
 	if _, enabled := s.OAuth.Config(p); !enabled {
 		return httpError{http.StatusNotFound,
 			fmt.Sprintf("%s 로그인이 설정되지 않았습니다.", p.Label())}
@@ -86,9 +92,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 	if !ok {
 		return httpError{http.StatusNotFound, "알 수 없는 로그인 제공자입니다."}
 	}
+	if p != oauth.Soop {
+		return httpError{http.StatusNotFound, "SOOP 로그인만 사용할 수 있습니다."}
+	}
 
 	q := r.URL.Query()
-	state := q.Get("state")
+	state := oauthCallbackState(r, p)
 	if !oauthStateCookieMatches(r, state) {
 		clearOAuthStateCookie(w)
 		return httpError{http.StatusBadRequest, "이 브라우저에서 시작한 로그인 요청이 아닙니다. 다시 로그인해 주세요."}
@@ -106,6 +115,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 		return bounce(w, r, redirectURI, url.Values{"error": {"로그인이 취소되었습니다."}})
 	}
 	code := q.Get("code")
+	// 구 Chat SDK 문서는 authCode라는 이름을 사용했다. 전환기 응답도 받는다.
+	if code == "" && p == oauth.Soop {
+		code = q.Get("authCode")
+	}
 	if code == "" {
 		return bounce(w, r, redirectURI, url.Values{"error": {"인증 코드를 받지 못했습니다."}})
 	}
@@ -113,23 +126,61 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 	info, err := s.OAuth.Exchange(r.Context(), p, code, state)
 	if err != nil {
 		s.Log.Warn("소셜 로그인 실패", "provider", p, "err", err)
+		if p == oauth.Soop && errors.Is(err, oauth.ErrSOOPLiveRequired) {
+			return bounce(w, r, redirectURI, url.Values{"error": {"SOOP 로그인은 현재 방송을 켠 상태에서 완료할 수 있습니다. 방송을 시작한 뒤 다시 시도해 주세요."}})
+		}
 		return bounce(w, r, redirectURI, url.Values{"error": {"로그인 처리에 실패했습니다."}})
 	}
 
-	token, acct, err := auth.LoginWithSocial(r.Context(), s.Store.Pool, auth.SocialUser{
-		Provider: string(info.Provider), ID: info.ID, Email: info.Email,
-		EmailVerified: info.EmailVerified, Nickname: info.Nickname,
-	}, r.UserAgent())
+	var token string
+	var acct *auth.Account
+	if p == oauth.Soop {
+		token, acct, err = auth.LoginWithVerifiedSOOP(r.Context(), s.Store.Pool, info.ID, info.Nickname, r.UserAgent())
+	} else {
+		token, acct, err = auth.LoginWithSocial(r.Context(), s.Store.Pool, auth.SocialUser{
+			Provider: string(info.Provider), ID: info.ID, Email: info.Email,
+			EmailVerified: info.EmailVerified, Nickname: info.Nickname,
+		}, r.UserAgent())
+	}
 	if err != nil {
 		s.Log.Warn("소셜 계정 처리 실패", "provider", p, "err", err)
 		return bounce(w, r, redirectURI, url.Values{"error": {err.Error()}})
+	}
+	if p == oauth.Soop {
+		if info.Tokens == nil {
+			return bounce(w, r, redirectURI, url.Values{"error": {"SOOP 채팅 권한 토큰을 받지 못했습니다. 다시 로그인해 주세요."}})
+		}
+		if err := s.OAuth.SaveSOOPTokens(r.Context(), s.Store.Pool, acct.ID, info.ID, *info.Tokens); err != nil {
+			s.Log.Error("SOOP OAuth 토큰 저장 실패", "account", acct.ID, "bid", info.ID, "err", err)
+			return bounce(w, r, redirectURI, url.Values{"error": {"SOOP 연동 정보를 안전하게 저장하지 못했습니다. 운영자에게 문의해 주세요."}})
+		}
+		if official, ok := s.Streamer.(OfficialChatHook); ok {
+			official.PromoteOfficial(context.WithoutCancel(r.Context()), info.ID)
+		}
+		if err := s.Store.EnsureStreamer(r.Context(), info.ID, info.Nickname); err != nil {
+			s.Log.Warn("SOOP OAuth 스트리머 등록 실패", "bid", info.ID, "err", err)
+		} else if s.Streamer != nil {
+			s.Streamer.Add(context.WithoutCancel(r.Context()), info.ID)
+		}
 	}
 
 	s.Log.Info("소셜 로그인", "provider", p, "account", acct.ID)
 	return bounce(w, r, redirectURI, url.Values{
 		"token": {token},
-		"email": {acct.Email},
+		"id":    {acct.SoopID},
 	})
+}
+
+func oauthCallbackState(r *http.Request, p oauth.Provider) string {
+	state := r.URL.Query().Get("state")
+	// SOOP 공식 auth/code는 state를 명세하지 않는다. 로그인 시작 시 만든
+	// HttpOnly 쿠키의 1회용 state를 대신 사용한다.
+	if p == oauth.Soop && state == "" {
+		if c, err := r.Cookie(oauthStateCookieName); err == nil {
+			return c.Value
+		}
+	}
+	return state
 }
 
 // bounce는 확장 또는 명시적으로 허용한 웹 주소로 결과를 돌려보낸다.
@@ -152,14 +203,20 @@ func validateRedirect(raw string) error {
 		return httpError{http.StatusBadRequest, "redirect_uri가 필요합니다."}
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	if err != nil || u.Host == "" {
+		return httpError{http.StatusBadRequest, "redirect_uri가 올바르지 않습니다."}
+	}
+	// 운영 서비스와 확장은 HTTPS만 허용한다. 공식 OAuth 앱에 등록한 로컬
+	// 개발 콜백은 http://localhost 형태이므로 PUBLIC_URL과 정확히 일치하는
+	// 루프백 주소에 한해서만 먼저 허용한다.
+	publicURL := strings.TrimSpace(os.Getenv("PUBLIC_URL"))
+	if publicURL != "" && allowedLocation(raw, publicURL) {
+		return nil
+	}
+	if u.Scheme != "https" {
 		return httpError{http.StatusBadRequest, "redirect_uri가 올바르지 않습니다."}
 	}
 	if isExtensionRedirect(raw) {
-		return nil
-	}
-	publicURL := strings.TrimSpace(os.Getenv("PUBLIC_URL"))
-	if publicURL != "" && allowedLocation(raw, publicURL) {
 		return nil
 	}
 	for _, allowed := range strings.Split(os.Getenv("OAUTH_REDIRECT_ALLOWLIST"), ",") {
@@ -206,7 +263,8 @@ func allowedLocation(raw, allowed string) bool {
 		return false
 	}
 	a, err := url.Parse(allowed)
-	if err != nil || a.User != nil || a.Fragment != "" || a.Scheme != "https" {
+	if err != nil || a.User != nil || a.Fragment != "" ||
+		(a.Scheme != "https" && !(a.Scheme == "http" && isLoopbackHost(a.Hostname()))) {
 		return false
 	}
 	if u.Scheme != a.Scheme || u.Host != a.Host {
@@ -215,6 +273,14 @@ func allowedLocation(raw, allowed string) bool {
 	base := strings.TrimRight(a.EscapedPath(), "/")
 	path := u.EscapedPath()
 	return base == "" || path == base || strings.HasPrefix(path, base+"/")
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func setOAuthStateCookie(w http.ResponseWriter, state string) {

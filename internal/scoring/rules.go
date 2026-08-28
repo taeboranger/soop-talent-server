@@ -51,7 +51,8 @@ type SubscribeRules struct {
 }
 
 type FanclubRules struct {
-	JoinPoints int `json:"joinPoints"` // 팬클럽 가입 시 1회
+	// 공식 Chat SDK 후원 이벤트의 fanNumber로 신규 팬클럽 가입만 판별한다.
+	JoinPoints int `json:"joinPoints"`
 }
 
 type ManualRules struct {

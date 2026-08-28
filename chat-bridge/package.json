@@ -1,0 +1,9 @@
+{
+  "name": "sooptalent-chat-bridge",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "puppeteer-core": "25.9.0"
+  }
+}

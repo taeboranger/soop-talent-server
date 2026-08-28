@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -31,6 +33,10 @@ type entry struct {
 	chat      *soop.ChatClient   // 멈춰 있으면 nil
 	enabled   bool               // 채팅 연동 스위치
 	startedAt time.Time
+	official  bool
+	sdk       chan scoring.SDKEvent
+	live      *scoring.Live
+	state     soop.ChatState
 }
 
 // Status는 상태 화면이 필요로 하는 것을 한 번에 담는다.
@@ -41,6 +47,7 @@ type Status struct {
 	Running   bool // 실제로 고루틴이 돌고 있는가
 	StartedAt time.Time
 	Chat      soop.ChatState
+	Official  bool // 공식 Chat SDK 경로인지, 구 비공개 소켓 폴백인지
 }
 
 // Collector는 여러 스트리머의 채팅을 동시에 수집하고 달란트를 적립한다.
@@ -135,9 +142,12 @@ func (c *Collector) Status(bid string) Status {
 		BID: bid, Known: true,
 		Enabled: e.enabled, Running: e.cancel != nil,
 		StartedAt: e.startedAt,
+		Official:  e.official,
 	}
 	if e.chat != nil {
 		st.Chat = e.chat.State()
+	} else if e.official {
+		st.Chat = e.state
 	}
 	return st
 }
@@ -167,6 +177,23 @@ func (c *Collector) startLocked(bid string, e *entry) {
 		rules = scoring.DefaultRules()
 	}
 	live := scoring.NewLive(bid, c.Store.Pool, c.Log, rules)
+	e.live = live
+
+	// 공식 OAuth 토큰이 있으면 문서화된 Chat SDK 브리지를 사용한다.
+	// 토큰이 없는 기존 수동 연결만 종전 비공개 소켓을 임시 폴백으로 유지한다.
+	var one int
+	e.official = c.Store.Pool.QueryRow(sub,
+		`SELECT 1 FROM soop_oauth_tokens WHERE bid=$1`, bid).Scan(&one) == nil
+	if e.official {
+		e.sdk = make(chan scoring.SDKEvent, 4096)
+		e.state = soop.ChatState{Phase: soop.PhaseConnecting,
+			Detail: "SOOP 공식 Chat SDK 연결을 기다리는 중입니다.", Since: time.Now()}
+		go live.FlushStayLoop(sub, stayFlushEvery)
+		go c.reloadRules(sub, bid, live)
+		go c.consumeSDK(sub, bid, e.sdk, live)
+		c.Log.Info("공식 Chat SDK 수집 시작", "bid", bid)
+		return
+	}
 
 	client := soop.NewChatClient(bid, c.API, c.Log)
 	e.chat = client
@@ -186,7 +213,138 @@ func (c *Collector) stopLocked(bid string, e *entry) {
 	e.cancel()
 	e.cancel = nil
 	e.chat = nil
+	e.sdk = nil
+	e.live = nil
+	e.official = false
 	c.Log.Info("수집 중단", "bid", bid)
+}
+
+// PromoteOfficial은 SOOP OAuth 로그인 직후 기존 비공개 소켓을 끊고 공식 SDK로 전환한다.
+func (c *Collector) PromoteOfficial(ctx context.Context, bid string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[bid]
+	if !ok {
+		return
+	}
+	if e.cancel != nil {
+		c.stopLocked(bid, e)
+	}
+	if e.enabled {
+		c.startLocked(bid, e)
+	}
+}
+
+// IngestSDK는 내부 브리지가 보낸 공식 이벤트를 수집 큐에 넣는다.
+func (c *Collector) IngestSDK(ctx context.Context, bid string, ev scoring.SDKEvent) error {
+	c.mu.Lock()
+	e := c.entries[bid]
+	if e == nil || !e.official || e.sdk == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("공식 채팅 수집 대상이 아닙니다: %s", bid)
+	}
+	e.state.LastPacket = time.Now()
+	e.state.Packets++
+	ch := e.sdk
+	c.mu.Unlock()
+	select {
+	case ch <- ev:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return fmt.Errorf("공식 채팅 이벤트 큐가 가득 찼습니다: %s", bid)
+	}
+}
+
+// SetSDKState는 브리지의 접속·방송대기·오류 상태를 대시보드에 반영한다.
+func (c *Collector) SetSDKState(bid, phase, broadNo, detail, lastErr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[bid]
+	if e == nil || !e.official {
+		return
+	}
+	now := time.Now()
+	if e.state.Phase != phase {
+		e.state.Since = now
+	}
+	e.state.Phase, e.state.Detail = phase, detail
+	if broadNo != "" {
+		e.state.BroadNo = broadNo
+	}
+	if phase == soop.PhaseConnected {
+		e.state.ConnectedAt, e.state.Retries = now, 0
+	}
+	if lastErr != "" {
+		e.state.LastError = lastErr
+		e.state.Retries++
+	}
+	if phase != soop.PhaseConnected && e.live != nil {
+		e.live.OfficialDisconnected()
+	}
+}
+
+func (c *Collector) consumeSDK(ctx context.Context, bid string, in <-chan scoring.SDKEvent, live *scoring.Live) {
+	var pending []scoring.Event
+	flushAt := time.NewTicker(awardFlushEvery)
+	defer flushAt.Stop()
+	flush := func(base context.Context) {
+		if len(pending) == 0 {
+			return
+		}
+		if _, err := scoring.Award(base, c.Store.Pool, pending); err != nil {
+			c.Log.Warn("공식 SDK 달란트 적립 실패", "bid", bid, "n", len(pending), "err", err)
+		}
+		pending = pending[:0]
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			end, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			flush(end)
+			cancel()
+			return
+		case <-flushAt.C:
+			flush(ctx)
+		case ev := <-in:
+			now := ev.Received
+			if now.IsZero() {
+				now = time.Now()
+			}
+			if ev.BroadNo != "" {
+				_ = c.Store.StartBroadcast(ctx, bid, ev.BroadNo, "")
+			}
+			c.Raw.Write(store.RawEvent{BID: bid, BroadNo: ev.BroadNo, Svc: "sdk:" + ev.Action,
+				Parts: []string{}, Raw: ev.Message, RecvAt: now})
+			pending = append(pending, live.HandleSDK(ev, now)...)
+			c.touchSDKUser(ctx, bid, ev.Message)
+			if len(pending) >= awardFlushSize {
+				flush(ctx)
+			}
+		}
+	}
+}
+
+func (c *Collector) touchSDKUser(ctx context.Context, bid string, raw json.RawMessage) {
+	var m struct {
+		UserID           string `json:"userId"`
+		UserNickname     string `json:"userNickname"`
+		ReceiverID       string `json:"receiverId"`
+		ReceiverNickname string `json:"receiverNickname"`
+		UserList         []struct {
+			UserID       string `json:"userId"`
+			UserNickname string `json:"userNickname"`
+		} `json:"userList"`
+	}
+	if json.Unmarshal(raw, &m) != nil {
+		return
+	}
+	c.upsert(ctx, bid, m.UserID, m.UserNickname, -1)
+	c.upsert(ctx, bid, m.ReceiverID, m.ReceiverNickname, -1)
+	for _, u := range m.UserList {
+		c.upsert(ctx, bid, u.UserID, u.UserNickname, -1)
+	}
 }
 
 // reloadRules는 설정 화면에서 바꾼 규칙을 주기적으로 반영한다.
@@ -253,9 +411,15 @@ func (c *Collector) consume(ctx context.Context, bid string, client *soop.ChatCl
 				live.SetBroadcast(pkt.BroadNo)
 			}
 
-			// 시청자 목록과 팬클럽 정보는 양이 지나치게 많아 원본 저장에서 제외한다.
+			// 팬가입은 상태 목록(0127)을 추론해 적립하던 방식이었다.
+			// 공식 API 승인 전까지는 수집·상태 갱신·적립 모두 하지 않는다.
+			if pkt.Svc == soop.SvcFanclub {
+				continue
+			}
+
+			// 시청자 목록은 양이 지나치게 많아 원본 저장에서 제외한다.
 			// (2.4만 시청자 방송 기준 25초에 3천 패킷)
-			if pkt.Svc != soop.SvcViewerList && pkt.Svc != soop.SvcFanclub {
+			if pkt.Svc != soop.SvcViewerList {
 				c.Raw.Write(store.RawEvent{
 					BID: bid, BroadNo: pkt.BroadNo, Svc: pkt.Svc,
 					Parts: pkt.Parts, Raw: pkt.Raw, RecvAt: now,
@@ -285,12 +449,12 @@ func flushRemaining(base context.Context, c *Collector, bid string, pending []sc
 	}
 }
 
-// touchUser는 시청자 이름과 팬클럽 주차를 최신으로 유지한다.
+// touchUser는 시청자 이름을 최신으로 유지한다.
 func (c *Collector) touchUser(ctx context.Context, bid string, pkt soop.Packet) {
 	switch pkt.Svc {
 	case soop.SvcChat, soop.SvcEmoticon:
 		if ev, ok := soop.ParseChat(pkt); ok {
-			c.upsert(ctx, bid, ev.UserID, ev.Nickname, ev.FanclubWeeks)
+			c.upsert(ctx, bid, ev.UserID, ev.Nickname, -1)
 		}
 	case soop.SvcEnter, soop.SvcExit:
 		if ev, ok := soop.ParsePresence(pkt); ok {

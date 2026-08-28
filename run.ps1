@@ -3,6 +3,7 @@
 #   .\run.ps1                     기본 설정으로 실행
 #   .\run.ps1 -Streamers "abc"    다른 스트리머 수집
 #   .\run.ps1 -Build              실행 전에 다시 빌드
+#   .\run.ps1 -Build -OfficialChat SOOP 공식 OAuth·Chat SDK까지 로컬 테스트
 #   .\run.ps1 -Stop               DB까지 정리하고 종료
 #
 # Go가 PATH에 없으면 설치 위치에서 자동으로 찾아 쓴다.
@@ -10,8 +11,9 @@
 param(
     [string]$Streamers = "",          # 승인 절차 없이 강제 수집 (개발용)
     [string]$Listen = ":8099",
-    [string]$AdminEmails = "admin@sooptalent.local",
+    [string]$AdminSOOPIDs = "",
     [switch]$Build,
+    [switch]$OfficialChat,
     [switch]$Stop
 )
 
@@ -34,6 +36,9 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 # ── 종료 ───────────────────────────────────────────────────────────────────
 if ($Stop) {
     Get-CimInstance Win32_Process -Filter "Name = 'sooptalent.exe'" |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+        Where-Object { $_.CommandLine -like '*chat-bridge*bridge.mjs*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     docker compose down
     Write-Host "정리 완료." -ForegroundColor Green
@@ -68,15 +73,6 @@ if ($Build -or -not (Test-Path "bin\sooptalent.exe")) {
     go build -o bin/sooptalent.exe ./cmd/sooptalent
     if (-not $?) { Write-Host "빌드 실패." -ForegroundColor Red; exit 1 }
     Write-Host "빌드 완료" -ForegroundColor Green
-
-    # 가이드가 바뀌었을 수 있으므로 GitHub Pages용 사본도 다시 뽑는다.
-    # Node가 없으면 서버 빌드는 이미 끝났으니 알리기만 하고 넘어간다.
-    if (Get-Command node -ErrorAction SilentlyContinue) {
-        node tools/build-docs.mjs
-        if (-not $?) { Write-Host "docs 생성 실패 — 가이드 링크 규칙을 확인하세요." -ForegroundColor Yellow }
-    } else {
-        Write-Host "Node가 없어 docs/를 건너뜁니다." -ForegroundColor DarkGray
-    }
 }
 
 # ── 실행 ───────────────────────────────────────────────────────────────────
@@ -85,15 +81,72 @@ $env:LISTEN         = $Listen
 $env:PUBLIC_URL     = "http://localhost$Listen"
 $env:MIGRATIONS     = "./migrations"
 $env:LOG_LEVEL      = "info"
-$env:ADMIN_EMAILS   = $AdminEmails
+$env:ADMIN_SOOP_IDS = $AdminSOOPIDs
 $env:STREAMERS      = $Streamers
+
+# ── 공식 SOOP OAuth·Chat SDK 로컬 시험 ───────────────────────────────────
+$bridgeProcess = $null
+if ($OfficialChat) {
+    # 서버 전용 로컬 설정만 읽는다. 다른 프로젝트의 .env에 의존하지 않는다.
+    $localEnv = Join-Path $PSScriptRoot ".env.local"
+    if (Test-Path -LiteralPath $localEnv) {
+        foreach ($line in Get-Content -LiteralPath $localEnv) {
+            if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+                $key, $value = $Matches[1], $Matches[2].Trim().Trim('"')
+                if ($key -in @('SOOP_CLIENT_ID','SOOP_CLIENT_SECRET',
+                    'SOOP_TOKEN_ENCRYPTION_KEY','CHAT_BRIDGE_SECRET','CHAT_BRIDGE_URL') -and
+                    -not (Test-Path "Env:$key")) {
+                    Set-Item -Path "Env:$key" -Value $value
+                }
+            }
+        }
+    }
+    if (-not $env:SOOP_CLIENT_ID -or -not $env:SOOP_CLIENT_SECRET) {
+        throw "SOOP_CLIENT_ID/SECRET가 필요합니다. sooptalent-server/.env.local 또는 현재 환경변수에 설정하세요."
+    }
+    if (-not $env:SOOP_TOKEN_ENCRYPTION_KEY) {
+        $bytes = New-Object byte[] 32
+        [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $env:SOOP_TOKEN_ENCRYPTION_KEY = [Convert]::ToBase64String($bytes)
+        Write-Host "시험용 토큰 암호화 키를 이번 실행에만 생성했습니다." -ForegroundColor DarkGray
+    }
+    if (-not $env:CHAT_BRIDGE_SECRET) {
+        $bytes = New-Object byte[] 32
+        [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $env:CHAT_BRIDGE_SECRET = [Convert]::ToBase64String($bytes)
+    }
+    $env:SERVER_INTERNAL_URL = "http://localhost$Listen"
+    # Chat SDK를 실제 앱 Origin에서 실행한다. about:blank Origin은 SOOP API가 거절할 수 있다.
+    $env:CHAT_SDK_PAGE_URL = "http://localhost$Listen"
+    $env:CHROMIUM_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if (-not (Test-Path -LiteralPath $env:CHROMIUM_PATH)) {
+        throw "Chrome 실행 파일을 찾지 못했습니다: $env:CHROMIUM_PATH"
+    }
+    if (-not (Test-Path "chat-bridge\node_modules")) {
+        npm --prefix chat-bridge ci --ignore-scripts
+        if (-not $?) { throw "Chat SDK 브리지 패키지 설치 실패" }
+    }
+    $bridgeProcess = Start-Process -FilePath "node" -ArgumentList ".\chat-bridge\bridge.mjs" `
+        -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput "chat-bridge.log" -RedirectStandardError "chat-bridge.log.err"
+}
 
 Write-Host ""
 Write-Host "서버 주소:   http://localhost$Listen" -ForegroundColor Cyan
 Write-Host "관리자 화면: http://localhost$Listen/admin" -ForegroundColor Cyan
-Write-Host "관리자 이메일: $AdminEmails" -ForegroundColor DarkGray
+Write-Host "관리자 SOOP ID: $AdminSOOPIDs" -ForegroundColor DarkGray
 if ($Streamers) { Write-Host "강제 수집:   $Streamers (개발용)" -ForegroundColor Yellow }
+if ($OfficialChat) {
+    Write-Host "공식 채팅:   활성 (로그: chat-bridge.log)" -ForegroundColor Green
+    Write-Host "SOOP 콜백:   http://localhost$Listen/api/oauth/soop/callback" -ForegroundColor Cyan
+}
 Write-Host "중지하려면 Ctrl+C" -ForegroundColor DarkGray
 Write-Host ""
 
-& ".\bin\sooptalent.exe"
+try {
+    & ".\bin\sooptalent.exe"
+} finally {
+    if ($bridgeProcess -and -not $bridgeProcess.HasExited) {
+        Stop-Process -Id $bridgeProcess.Id -Force
+    }
+}

@@ -2,9 +2,11 @@ package scoring
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,19 +33,173 @@ type Live struct {
 	chatDay  map[string]int          // userID → 오늘 채팅으로 받은 달란트
 	dayStamp string                  // chatDay가 어느 날짜 기준인지
 
-	// 팬클럽 상태. 첫 관측은 기준선으로만 쓴다.
-	fanclub map[string]int
 }
 
 type presence struct {
-	startedAt time.Time
-	lastSeen  time.Time
-	ticksPaid int
+	startedAt     time.Time
+	lastSeen      time.Time
+	ticksPaid     int
+	authoritative bool
 }
 
 type minuteCount struct {
 	minute string
 	n      int
+}
+
+// SDKEvent는 공식 SOOP Chat SDK가 전달한 한 이벤트다.
+type SDKEvent struct {
+	ID       string          `json:"id"`
+	Action   string          `json:"action"`
+	BroadNo  string          `json:"broadNo,omitempty"`
+	Message  json.RawMessage `json:"message"`
+	Received time.Time       `json:"receivedAt"`
+}
+
+type sdkUser struct {
+	UserID       string `json:"userId"`
+	UserNickname string `json:"userNickname"`
+}
+
+type sdkMessage struct {
+	sdkUser
+	BJID                  string    `json:"bjId"`
+	Message               string    `json:"message"`
+	ImageURL              string    `json:"imageUrl"`
+	Count                 int       `json:"count"`
+	FanNumber             int       `json:"fanNumber"`
+	SubscriptionMonths    int       `json:"subscriptionMonths"`
+	AccSubscriptionMonths int       `json:"accSubscriptionMonths"`
+	Type                  string    `json:"type"`
+	ReceiverID            string    `json:"receiverId"`
+	ReceiverNickname      string    `json:"receiverNickname"`
+	UserList              []sdkUser `json:"userList"`
+}
+
+// HandleSDK는 문서화된 공식 Chat SDK 이벤트를 달란트 이벤트로 바꾼다.
+func (l *Live) HandleSDK(ev SDKEvent, now time.Time) []Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if ev.BroadNo != "" {
+		if n, err := strconv.ParseInt(ev.BroadNo, 10, 64); err == nil && l.broadNo != n {
+			l.broadNo = n
+			l.seen = make(map[string]*presence)
+		}
+	}
+	var m sdkMessage
+	if err := json.Unmarshal(ev.Message, &m); err != nil {
+		return nil
+	}
+	key := ev.ID
+	if key == "" {
+		key = fmt.Sprintf("%d", now.UnixNano())
+	}
+	switch ev.Action {
+	case "IN":
+		for _, u := range m.UserList {
+			l.touchOfficial(u.UserID, now)
+		}
+	case "JOIN":
+		// JOIN은 SDK 자신(스트리머)의 입장이다. 시청자로 적립하지 않는다.
+	case "OUT":
+		for _, u := range m.UserList {
+			delete(l.seen, u.UserID)
+		}
+	case "QUIT":
+		// SDK 자신의 강제 퇴장이다. 브리지 종료 상태가 전체 체류를 정리한다.
+	case "USERSTATUS_CHANGED":
+		for _, u := range m.UserList {
+			l.touchOfficial(u.UserID, now)
+		}
+		l.touchOfficial(m.UserID, now)
+	case "MESSAGE", "MANAGER_MESSAGE":
+		l.touchOfficial(m.UserID, now)
+		return l.awardChat(m.UserID, m.Message, m.Message == "" && m.ImageURL != "", key, now)
+	case "BALLOON_GIFTED", "VIDEOBALLOON_GIFTED", "BATTLE_MISSION_GIFTED", "CHALLENGE_MISSION_GIFTED":
+		return l.awardSDKDonation(m, "star_balloon", l.rules.Donation.StarBalloonRate, key, now)
+	case "ADBALLOON_GIFTED":
+		return l.awardSDKDonation(m, "ad_balloon", l.rules.Donation.AdBalloonRate, key, now)
+	case "SUBSCRIBED":
+		return l.awardSDKSubscribe(m.UserID, subscriptionTypeMonths(m.Type), key, now)
+	case "SUBSCRIPTION_RENEWED":
+		months := m.SubscriptionMonths
+		if months <= 0 {
+			months = m.AccSubscriptionMonths
+		}
+		return l.awardSDKSubscribe(m.UserID, months, key, now)
+	case "SUBSCRIPTION_GIFTED":
+		// 구독권을 결제한 기여는 선물한 사용자에게 적립한다. 수령자의 실제 구독
+		// 활성화는 별도 SUBSCRIBED 이벤트로 오므로 수령자에게 중복 지급하지 않는다.
+		return l.awardSDKSubscribe(m.UserID, subscriptionTypeMonths(m.Type), key, now)
+	}
+	return nil
+}
+
+func (l *Live) touchOfficial(userID string, now time.Time) {
+	if !soop.IsUserID(userID) || soop.NormalizeUserID(userID) == soop.NormalizeUserID(l.BID) {
+		return
+	}
+	if p := l.seen[userID]; p != nil {
+		p.lastSeen, p.authoritative = now, true
+		return
+	}
+	l.seen[userID] = &presence{startedAt: now, lastSeen: now, authoritative: true}
+}
+
+func (l *Live) OfficialDisconnected() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for id, p := range l.seen {
+		if p.authoritative {
+			delete(l.seen, id)
+		}
+	}
+}
+
+func subscriptionTypeMonths(kind string) int {
+	switch strings.ToUpper(kind) {
+	case "MEMBERSHIP_3", "GIFT_90":
+		return 3
+	case "MEMBERSHIP_6", "GIFT_180":
+		return 6
+	case "MEMBERSHIP_12":
+		return 12
+	default:
+		return 1
+	}
+}
+
+func (l *Live) awardSDKSubscribe(userID string, months int, key string, now time.Time) []Event {
+	if !soop.IsUserID(userID) || soop.NormalizeUserID(userID) == soop.NormalizeUserID(l.BID) {
+		return nil
+	}
+	months = max(1, min(months, l.rules.Subscribe.MaxMonths))
+	amount := l.rules.Subscribe.Base + l.rules.Subscribe.PerMonth*months
+	if amount <= 0 {
+		return nil
+	}
+	return []Event{{BID: l.BID, UserID: userID, Kind: KindSubscribe, Amount: amount,
+		OccurredAt: now, BroadNo: l.broadPtr(), IdemKey: "sdk:" + key + ":subscribe",
+		Meta: map[string]any{"months": months}}}
+}
+
+func (l *Live) awardSDKDonation(m sdkMessage, item string, rate int, key string, now time.Time) []Event {
+	if !soop.IsUserID(m.UserID) || soop.NormalizeUserID(m.UserID) == soop.NormalizeUserID(l.BID) || m.Count <= 0 {
+		return nil
+	}
+	out := []Event{}
+	if amount := m.Count * rate; amount > 0 {
+		out = append(out, Event{BID: l.BID, UserID: m.UserID, Kind: KindDonation,
+			Amount: amount, OccurredAt: now, BroadNo: l.broadPtr(), IdemKey: "sdk:" + key + ":donation",
+			Meta: map[string]any{"item": item, "count": m.Count}})
+	}
+	if m.FanNumber > 0 && l.rules.Fanclub.JoinPoints > 0 {
+		out = append(out, Event{BID: l.BID, UserID: m.UserID, Kind: KindFanclub,
+			Amount: l.rules.Fanclub.JoinPoints, OccurredAt: now, BroadNo: l.broadPtr(),
+			IdemKey: "fanclub:" + m.UserID,
+			Meta:    map[string]any{"fanNumber": m.FanNumber, "source": item}})
+	}
+	return out
 }
 
 func NewLive(bid string, pool *store.DB, log *slog.Logger, rules Rules) *Live {
@@ -52,7 +208,6 @@ func NewLive(bid string, pool *store.DB, log *slog.Logger, rules Rules) *Live {
 		seen:    make(map[string]*presence),
 		chatMin: make(map[string]*minuteCount),
 		chatDay: make(map[string]int),
-		fanclub: make(map[string]int),
 	}
 }
 
@@ -100,8 +255,6 @@ func (l *Live) Handle(p soop.Packet, now time.Time) []Event {
 		return l.onDonation(p, now)
 	case soop.SvcSubscribe:
 		return l.onSubscribe(p, now)
-	case soop.SvcFanclub:
-		return l.onFanclubInfo(p, now)
 	}
 	return nil
 }
@@ -116,30 +269,31 @@ func (l *Live) onChat(p soop.Packet, now time.Time) []Event {
 		return nil
 	}
 	l.touch(ev.UserID, now)
+	return l.awardChat(ev.UserID, ev.Message, ev.Emoticon, "", now)
+}
 
-	var out []Event
-	if e := l.checkFanclub(ev.UserID, ev.FanclubWeeks, now); e != nil {
-		out = append(out, *e)
+func (l *Live) awardChat(userID, message string, emoticon bool, sdkKey string, now time.Time) []Event {
+	if !soop.IsUserID(userID) || soop.NormalizeUserID(userID) == soop.NormalizeUserID(l.BID) {
+		return nil
 	}
-
 	r := l.rules.Chat
 	if r.Points <= 0 {
-		return out
+		return nil
 	}
 	// 이모티콘 채팅은 본문이 없으므로 최소 길이 검사를 건너뛴다.
-	if !ev.Emoticon && len([]rune(ev.Message)) < r.MinLength {
-		return out
+	if !emoticon && len([]rune(message)) < r.MinLength {
+		return nil
 	}
 
 	// 분당 상한 — 도배 파밍 차단
 	minute := now.Format("2006-01-02T15:04")
-	mc := l.chatMin[ev.UserID]
+	mc := l.chatMin[userID]
 	if mc == nil || mc.minute != minute {
 		mc = &minuteCount{minute: minute}
-		l.chatMin[ev.UserID] = mc
+		l.chatMin[userID] = mc
 	}
 	if mc.n >= r.PerMinuteCap {
-		return out
+		return nil
 	}
 
 	// 일일 상한
@@ -148,20 +302,24 @@ func (l *Live) onChat(p soop.Packet, now time.Time) []Event {
 		l.dayStamp = day
 		l.chatDay = make(map[string]int)
 	}
-	if r.DailyCap > 0 && l.chatDay[ev.UserID]+r.Points > r.DailyCap {
-		return out
+	if r.DailyCap > 0 && l.chatDay[userID]+r.Points > r.DailyCap {
+		return nil
 	}
 
 	mc.n++
-	l.chatDay[ev.UserID] += r.Points
+	l.chatDay[userID] += r.Points
+	idem := fmt.Sprintf("chat:%d:%s:%s:%d", l.broadNo, userID, minute, mc.n)
+	if sdkKey != "" {
+		idem = "sdk:" + sdkKey + ":chat"
+	}
 
-	return append(out, Event{
-		BID: l.BID, UserID: ev.UserID, Kind: KindChat,
+	return []Event{{
+		BID: l.BID, UserID: userID, Kind: KindChat,
 		Amount: r.Points, OccurredAt: now, BroadNo: l.broadPtr(),
 		// 같은 분 안의 n번째 채팅 — 재접속으로 패킷을 다시 받아도 중복되지 않는다.
-		IdemKey: fmt.Sprintf("chat:%d:%s:%s:%d", l.broadNo, ev.UserID, minute, mc.n),
-		Meta:    map[string]any{"emoticon": ev.Emoticon},
-	})
+		IdemKey: idem,
+		Meta:    map[string]any{"emoticon": emoticon},
+	}}
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +383,7 @@ func (l *Live) CollectStayTicks(now time.Time) []Event {
 
 	var out []Event
 	for userID, pr := range l.seen {
-		if now.Sub(pr.lastSeen) > grace {
+		if !pr.authoritative && now.Sub(pr.lastSeen) > grace {
 			delete(l.seen, userID)
 			continue
 		}
@@ -247,7 +405,7 @@ func (l *Live) CollectStayTicks(now time.Time) []Event {
 }
 
 // ---------------------------------------------------------------------------
-// 후원 · 구독 · 팬클럽
+// 후원 · 구독
 // ---------------------------------------------------------------------------
 
 func (l *Live) onDonation(p soop.Packet, now time.Time) []Event {
@@ -291,66 +449,6 @@ func (l *Live) onSubscribe(p soop.Packet, now time.Time) []Event {
 		IdemKey: fmt.Sprintf("subscribe:%s:%d", ev.UserID, ev.Months),
 		Meta:    map[string]any{"months": ev.Months},
 	}}
-}
-
-// onFanclubInfo는 0127에서 유저별 팬클럽 주차를 읽는다.
-// 형식: ["", 유저ID, "fw=45&afw=45", 유저ID, "fw=-1&afw=-1", ...]
-func (l *Live) onFanclubInfo(p soop.Packet, now time.Time) []Event {
-	var out []Event
-	for i := 1; i+1 < len(p.Parts); i += 2 {
-		id := soop.NormalizeUserID(p.Parts[i])
-		if id == "" {
-			continue
-		}
-		if e := l.checkFanclub(id, parseFW(p.Parts[i+1]), now); e != nil {
-			out = append(out, *e)
-		}
-	}
-	return out
-}
-
-// checkFanclub은 미가입(-1)에서 가입으로 바뀌는 순간을 잡는다.
-//
-// 중요: 처음 보는 유저는 기준선으로만 기록하고 적립하지 않는다.
-// SOOP에는 "팬클럽 가입" 이벤트가 없어 상태 전환으로 추론할 수밖에 없는데,
-// 첫 관측을 가입으로 치면 이미 오래된 팬 전원에게 가입 달란트가 나가버린다.
-func (l *Live) checkFanclub(userID string, weeks int, now time.Time) *Event {
-	prev, known := l.fanclub[userID]
-	l.fanclub[userID] = weeks
-	if !known || l.rules.Fanclub.JoinPoints <= 0 {
-		return nil
-	}
-	if prev > 0 || weeks <= 0 {
-		return nil
-	}
-	return &Event{
-		BID: l.BID, UserID: userID, Kind: KindFanclub,
-		Amount: l.rules.Fanclub.JoinPoints, OccurredAt: now, BroadNo: l.broadPtr(),
-		IdemKey: fmt.Sprintf("fanclub:%s", userID), // 최초 1회만
-		Meta:    map[string]any{"weeks": weeks},
-	}
-}
-
-// parseFW는 "fw=45&afw=45"에서 주차를 뽑는다. 실패하면 -1(미가입).
-func parseFW(s string) int {
-	const key = "fw="
-	i := 0
-	for i < len(s) {
-		// afw= 가 아닌 fw= 를 찾는다
-		if (i == 0 || s[i-1] == '&') && len(s)-i >= len(key) && s[i:i+len(key)] == key {
-			j := i + len(key)
-			end := j
-			for end < len(s) && s[end] != '&' {
-				end++
-			}
-			if n, err := strconv.Atoi(s[j:end]); err == nil {
-				return n
-			}
-			return -1
-		}
-		i++
-	}
-	return -1
 }
 
 func (l *Live) broadPtr() *int64 {

@@ -28,7 +28,8 @@ const (
 type Claim struct {
 	ID          int64       `json:"id"`
 	AccountID   int64       `json:"accountId"`
-	Email       string      `json:"email,omitempty"`
+	UserID      string      `json:"userId,omitempty"`
+	Nickname    string      `json:"nickname,omitempty"`
 	BID         string      `json:"bid"`
 	SoopNick    string      `json:"soopNick,omitempty"`
 	Status      ClaimStatus `json:"status"`
@@ -114,9 +115,11 @@ func ApprovedBID(ctx context.Context, pool *store.DB, accountID int64) (string, 
 // ListClaims는 관리자 화면용 목록이다. status가 비면 전체.
 func ListClaims(ctx context.Context, pool *store.DB, status string) ([]Claim, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT c.id, c.account_id, a.email, c.bid, COALESCE(c.soop_nick,''), c.status,
+		SELECT c.id, c.account_id, COALESCE(o.provider_user_id,''), COALESCE(o.nickname,''),
+		       c.bid, COALESCE(c.soop_nick,''), c.status,
 		       COALESCE(c.note,''), c.requested_at, c.decided_at
-		  FROM streamer_claims c JOIN accounts a ON a.id = c.account_id
+		  FROM streamer_claims c
+		  LEFT JOIN oauth_identities o ON o.account_id = c.account_id AND o.provider = 'soop'
 		 WHERE ($1 = '' OR c.status = $1)
 		 ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.requested_at DESC
 		 LIMIT 500`, status)
@@ -128,7 +131,7 @@ func ListClaims(ctx context.Context, pool *store.DB, status string) ([]Claim, er
 	var out []Claim
 	for rows.Next() {
 		var c Claim
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Email, &c.BID, &c.SoopNick,
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.UserID, &c.Nickname, &c.BID, &c.SoopNick,
 			&c.Status, &c.Note, &c.RequestedAt, &c.DecidedAt); err != nil {
 			return nil, err
 		}
