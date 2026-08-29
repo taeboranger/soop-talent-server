@@ -87,6 +87,10 @@ func (s *Server) dashboardPage() http.Handler {
 	})
 }
 
+// ordersPage는 같은 로그인 화면을 재사용하되 /orders라는 독립 URL에서 시청자
+// 본인의 구매내역만 보이게 한다. 화면 로직이 경로를 보고 관리 탭을 숨긴다.
+func (s *Server) ordersPage() http.Handler { return pageHandler(dashboardHTML) }
+
 // pageHandler는 인라인 CSS/JS만 허용하는 정적 페이지를 서빙한다.
 // 외부 리소스를 전부 차단해 공급망 표면을 없앤다.
 func pageHandler(body []byte) http.Handler {
@@ -95,7 +99,7 @@ func pageHandler(body []byte) http.Handler {
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "+
-				"connect-src 'self'; img-src 'self' https://profile.img.sooplive.com; base-uri 'none'; form-action 'none'")
+				"connect-src 'self'; img-src 'self' https://profile.img.sooplive.com https://res.sooplive.com; base-uri 'none'; form-action 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		_, _ = w.Write(body)

@@ -664,4 +664,47 @@ func TestViewerOrders_본인주문과보상상세만돌려준다(t *testing.T) {
 	}
 }
 
+// 시청자 구매 취소는 본인 주문만, 시장이 열려 있을 때만 가능해야 한다. 환불 이벤트와
+// 주문 상태 변경이 한 번만 일어나야 재시도나 화면 조작으로 달란트가 늘지 않는다.
+func TestCancelOrder_본인구매만열린시장에서환불(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	page, bid := setupPage(t, pool, []Item{{Name: "취소 보상", Price: 120}})
+	give(t, pool, bid, "buyer", 500)
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO purchase_orders (page_id,bid,user_id,nickname,total_price,status)
+		VALUES ($1,$2,'buyer','구매자',120,'fulfilled')`, page.ID, bid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orderID, err := tag.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO point_events (bid,user_id,kind,amount,occurred_at,idem_key,reason)
+		VALUES ($1,'buyer','purchase',-120,NOW(6),'purchase:test-viewer-cancel','테스트 구매')`, bid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO purchase_lines (order_id,item_id,item_name,quantity,unit_price)
+		VALUES ($1,$2,'취소 보상',1,120)`, orderID, page.Items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CancelOrder(ctx, pool, orderID, "other", ""); err == nil {
+		t.Fatal("다른 사람이 주문을 취소할 수 있으면 안 됨")
+	}
+	result, err := CancelOrder(ctx, pool, orderID, "buyer", "")
+	if err != nil {
+		t.Fatalf("구매 취소: %v", err)
+	}
+	if result.Order.Status != "cancelled" || result.Balance != 500 || balanceOf(t, pool, bid, "buyer") != 500 {
+		t.Fatalf("구매 취소 결과 = %+v", result)
+	}
+	if _, err := CancelOrder(ctx, pool, orderID, "buyer", ""); err == nil {
+		t.Fatal("이미 취소된 주문을 다시 환불할 수 있으면 안 됨")
+	}
+}
+
 func ptr(n int) *int { return &n }

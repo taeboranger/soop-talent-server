@@ -49,7 +49,7 @@
                       min-height:42px; background:#087fc2; border-color:#087fc2; }
   button.oauth-soop:hover:not(:disabled) { background:#087fc2; }
   .soop-mark { width:22px; height:22px; display:inline-grid; place-items:center; flex:0 0 22px; }
-  .soop-mark svg { width:22px; height:22px; display:block; }
+  .soop-mark img { width:22px; height:22px; display:block; border-radius:5px; }
   button.reject  { color:var(--bad); border-color:var(--bad); }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
@@ -158,7 +158,10 @@ function soopMark() {
   const mark = document.createElement("span");
   mark.className = "soop-mark";
   mark.setAttribute("aria-hidden", "true");
-  mark.innerHTML = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.2 8.35c0-2.43 1.97-4.4 4.4-4.4h6.8c2.43 0 4.4 1.97 4.4 4.4v4.1c0 2.43-1.97 4.4-4.4 4.4H10.7L6.2 20.1v-3.76a4.39 4.39 0 0 1-2-3.7v-4.3Z" fill="currentColor"/><circle cx="9" cy="10.2" r="1.45" fill="#087fc2"/><circle cx="15" cy="10.2" r="1.45" fill="#087fc2"/><path d="M9.2 13.1c1.65 1.08 3.95 1.08 5.6 0" stroke="#087fc2" stroke-width="1.35" stroke-linecap="round"/></svg>`;
+  const img = document.createElement("img");
+  img.src = "https://res.sooplive.com/favicon.ico";
+  img.alt = "";
+  mark.append(img);
   return mark;
 }
 

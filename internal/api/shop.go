@@ -39,6 +39,7 @@ func (s *Server) shopRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/market/{token}/state", s.h(s.handleMarketState))
 	mux.Handle("GET /api/market/{token}", s.session(s.handleMarketGet))
 	mux.Handle("POST /api/market/{token}/orders", s.session(s.handleMarketOrder))
+	mux.Handle("POST /api/market/{token}/orders/{id}/cancel", s.session(s.handleMarketOrderCancel))
 }
 
 // handleImageUpload는 보상 미리보기를 받는다.
@@ -453,10 +454,15 @@ func (s *Server) handleMarketGet(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	orders, err := shop.ViewerOrdersForPage(r.Context(), s.Store.Pool, acct.SoopID, p.ID)
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"page":    p,
 		"balance": balance,
 		"viewer":  map[string]string{"id": acct.SoopID, "nickname": acct.Nickname},
+		"orders":  orders,
 	})
 	return nil
 }
@@ -479,5 +485,24 @@ func (s *Server) handleMarketOrder(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	writeJSON(w, http.StatusCreated, result)
+	return nil
+}
+
+// handleMarketOrderCancel은 시장 화면에서 본인 구매를 취소한다. URL 토큰까지
+// 대조해 다른 시장 화면을 이용한 엉뚱한 주문 취소도 막는다.
+func (s *Server) handleMarketOrderCancel(w http.ResponseWriter, r *http.Request) error {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		return httpError{http.StatusBadRequest, "잘못된 구매 번호입니다."}
+	}
+	acct := accountOf(r)
+	result, err := shop.CancelOrder(r.Context(), s.Store.Pool, id, acct.SoopID, r.PathValue("token"))
+	if errors.Is(err, shop.ErrMarketClosed) {
+		return httpError{http.StatusGone, err.Error()}
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, result)
 	return nil
 }

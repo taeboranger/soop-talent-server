@@ -41,6 +41,13 @@ type ViewerOrder struct {
 	PageID      int64  `json:"pageId"`
 	MarketTitle string `json:"marketTitle"`
 	StreamerID  string `json:"streamerId"`
+	MarketOpen  bool   `json:"marketOpen"`
+}
+
+// OrderCancelResult는 시청자가 자기 구매를 취소한 뒤 갱신할 화면 상태다.
+type OrderCancelResult struct {
+	Order   *Order `json:"order"`
+	Balance int    `json:"balance"`
 }
 
 // CancelResult는 시장 취소로 되돌린 주문·달란트 합계다.
@@ -429,9 +436,87 @@ func OrderByID(ctx context.Context, pool *store.DB, id int64) (*Order, error) {
 	return &o, rows.Err()
 }
 
+// CancelOrder는 시장이 열려 있는 동안에만 시청자 본인의 확정 구매를 취소한다.
+// 재고는 확정(fulfilled) 주문만 합산하므로, 상태 변경만으로 즉시 수량과 인당
+// 제한이 되돌아간다. 환불 이벤트·주문 상태 변경은 반드시 같은 트랜잭션이다.
+// token은 시장 화면에서만 전달하며, 빈 값은 프로필 구매내역 화면을 뜻한다.
+func CancelOrder(ctx context.Context, pool *store.DB, orderID int64, userID, token string) (*OrderCancelResult, error) {
+	if orderID < 1 || !validSOOPUserID(userID) {
+		return nil, apperr.New("구매 내역을 확인할 수 없습니다")
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var order Order
+	var page Page
+	err = tx.QueryRow(ctx, `
+		SELECT o.id,o.user_id,COALESCE(o.nickname,''),COALESCE(o.comment_no,0),COALESCE(o.raw_comment,''),
+		       o.total_price,o.status,COALESCE(o.reject_reason,''),o.commented_at,o.settled_at,
+		       p.id,p.bid,p.title,p.status
+		  FROM purchase_orders o JOIN shop_pages p ON p.id=o.page_id
+		 WHERE o.id=$1 AND o.user_id=$2
+		   AND (NULLIF($3,'') IS NULL OR p.public_token=$3)
+		 FOR UPDATE`, orderID, userID, strings.TrimSpace(token)).
+		Scan(&order.ID, &order.UserID, &order.Nickname, &order.CommentNo, &order.RawComment,
+			&order.TotalPrice, &order.Status, &order.RejectReason, &order.CommentedAt, &order.OrderedAt,
+			&page.ID, &page.BID, &page.Title, &page.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if page.Status != StatusOpen {
+		return nil, ErrMarketClosed
+	}
+	if order.Status != "fulfilled" {
+		return nil, apperr.New("이미 취소되었거나 취소할 수 없는 구매입니다")
+	}
+
+	if order.TotalPrice > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO point_events (bid,user_id,kind,amount,occurred_at,idem_key,meta,reason)
+			VALUES ($1,$2,$3,$4,NOW(6),$5,$6,$7)
+			ON DUPLICATE KEY UPDATE idem_key=idem_key`,
+			page.BID, order.UserID, scoring.KindPurchaseRefund, order.TotalPrice,
+			fmt.Sprintf("purchase-cancel:%d", order.ID),
+			fmt.Sprintf(`{"pageId":%d,"orderId":%d}`, page.ID, order.ID),
+			fmt.Sprintf("%s 구매 취소 환불", page.Title)); err != nil {
+			return nil, err
+		}
+	}
+	const reason = "시청자가 시장이 열려 있는 동안 구매를 취소함"
+	if _, err := tx.Exec(ctx, `
+		UPDATE purchase_orders SET status='cancelled', reject_reason=$2
+		 WHERE id=$1 AND status='fulfilled'`, order.ID, reason); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	order.Status, order.RejectReason = "cancelled", reason
+	balance, err := Balance(ctx, pool, page.BID, order.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return &OrderCancelResult{Order: &order, Balance: balance}, nil
+}
+
 // ViewerOrders는 한 SOOP 계정의 구매 이력만 최신순으로 읽는다. 호출자는 API에서
 // 세션에 들어 있는 SOOP ID로 고정되므로, 전달받은 값으로 타인의 주문을 찾지 않는다.
 func ViewerOrders(ctx context.Context, pool *store.DB, userID string) ([]ViewerOrder, error) {
+	return viewerOrders(ctx, pool, userID, 0)
+}
+
+// ViewerOrdersForPage는 시장 화면에 표시할 로그인한 시청자 본인의 주문만 돌려준다.
+func ViewerOrdersForPage(ctx context.Context, pool *store.DB, userID string, pageID int64) ([]ViewerOrder, error) {
+	return viewerOrders(ctx, pool, userID, pageID)
+}
+
+func viewerOrders(ctx context.Context, pool *store.DB, userID string, pageID int64) ([]ViewerOrder, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return []ViewerOrder{}, nil
@@ -439,11 +524,11 @@ func ViewerOrders(ctx context.Context, pool *store.DB, userID string) ([]ViewerO
 	rows, err := pool.Query(ctx, `
 		SELECT o.id,o.user_id,COALESCE(o.nickname,''),COALESCE(o.comment_no,0),COALESCE(o.raw_comment,''),
 		       o.total_price,o.status,COALESCE(o.reject_reason,''),o.commented_at,o.settled_at,
-		       p.id,p.title,p.bid
+		       p.id,p.title,p.bid,(p.status='open')
 		  FROM purchase_orders o JOIN shop_pages p ON p.id=o.page_id
-		 WHERE o.user_id=$1
+		 WHERE o.user_id=$1 AND ($2=0 OR o.page_id=$2)
 		 ORDER BY o.settled_at DESC,o.id DESC
-		 LIMIT 500`, userID)
+		 LIMIT 500`, userID, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +540,7 @@ func ViewerOrders(ctx context.Context, pool *store.DB, userID string) ([]ViewerO
 		var o ViewerOrder
 		if err := rows.Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment,
 			&o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt, &o.OrderedAt,
-			&o.PageID, &o.MarketTitle, &o.StreamerID); err != nil {
+			&o.PageID, &o.MarketTitle, &o.StreamerID, &o.MarketOpen); err != nil {
 			return nil, err
 		}
 		index[o.ID] = len(out)
@@ -471,8 +556,8 @@ func ViewerOrders(ctx context.Context, pool *store.DB, userID string) ([]ViewerO
 	lines, err := pool.Query(ctx, `
 		SELECT l.order_id,l.item_name,l.quantity,l.unit_price
 		  FROM purchase_lines l JOIN purchase_orders o ON o.id=l.order_id
-		 WHERE o.user_id=$1
-		 ORDER BY l.id`, userID)
+		 WHERE o.user_id=$1 AND ($2=0 OR o.page_id=$2)
+		 ORDER BY l.id`, userID, pageID)
 	if err != nil {
 		return nil, err
 	}

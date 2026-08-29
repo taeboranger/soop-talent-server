@@ -66,7 +66,7 @@
                       min-height:42px; background:#087fc2; border-color:#087fc2; }
   button.oauth-soop:hover:not(:disabled) { background:#087fc2; }
   .soop-mark { width:22px; height:22px; display:inline-grid; place-items:center; flex:0 0 22px; }
-  .soop-mark svg { width:22px; height:22px; display:block; }
+  .soop-mark img { width:22px; height:22px; display:block; border-radius:5px; }
   button.danger { color:var(--bad); border-color:var(--bad); }
   button.sm { padding:4px 9px; font-size:12.5px; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -78,6 +78,12 @@
   .account { display:inline-flex; align-items:center; gap:7px; min-width:0; }
   button.account { padding:3px 5px; border-color:transparent; background:transparent; text-align:left; }
   button.account:hover:not(:disabled) { background:var(--accent-soft); border-color:var(--line); }
+  .profile-wrap { position:relative; }
+  .profile-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:5; min-width:132px;
+                  padding:5px; background:var(--bg); border:1px solid var(--line); border-radius:7px;
+                  box-shadow:0 8px 24px rgba(18,35,70,.16); }
+  .profile-menu a { display:block; padding:7px 9px; border-radius:5px; color:var(--fg); text-decoration:none; white-space:nowrap; }
+  .profile-menu a:hover { background:var(--accent-soft); color:var(--accent); }
   .account .avatar { width:27px; height:27px; border-radius:50%; object-fit:cover;
                      border:1px solid var(--line); background:var(--bg-inset); }
   .account .name { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -223,10 +229,13 @@
       <h1>SoopTalent</h1>
     </a>
     <div class="row" id="whoami" hidden>
-      <button class="account small" id="profileButton" type="button" title="구매내역 보기">
-        <img class="avatar" id="meAvatar" alt="" hidden>
-        <span class="name" id="meLabel"></span>
-      </button>
+      <div class="profile-wrap">
+        <button class="account small" id="profileButton" type="button" title="프로필 메뉴">
+          <img class="avatar" id="meAvatar" alt="" hidden>
+          <span class="name" id="meLabel"></span>
+        </button>
+        <div class="profile-menu small" id="profileMenu" hidden><a href="/orders">구매내역</a></div>
+      </div>
       <span class="badge info" id="bidBadge" hidden></span>
       <button class="sm" id="logout">로그아웃</button>
     </div>
@@ -239,7 +248,7 @@
     <div class="card stack">
       <div class="row" style="justify-content:space-between">
         <div><h2 style="margin-bottom:2px">내 구매내역</h2><p class="small muted" style="margin:0">내 SOOP 계정으로 구매한 달란트 시장 내역입니다.</p></div>
-        <button class="sm" id="profileClose" type="button">닫기</button>
+        <button class="sm" id="profileClose" type="button">홈으로</button>
       </div>
       <div id="myOrders" class="muted small">구매 내역을 불러오는 중…</div>
     </div>
@@ -514,8 +523,11 @@ function soopMark() {
   const mark = document.createElement("span");
   mark.className = "soop-mark";
   mark.setAttribute("aria-hidden", "true");
-  // 외부 이미지를 불러오지 않는 작은 SOOP 로그인 표식이다.
-  mark.innerHTML = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.2 8.35c0-2.43 1.97-4.4 4.4-4.4h6.8c2.43 0 4.4 1.97 4.4 4.4v4.1c0 2.43-1.97 4.4-4.4 4.4H10.7L6.2 20.1v-3.76a4.39 4.39 0 0 1-2-3.7v-4.3Z" fill="currentColor"/><circle cx="9" cy="10.2" r="1.45" fill="#087fc2"/><circle cx="15" cy="10.2" r="1.45" fill="#087fc2"/><path d="M9.2 13.1c1.65 1.08 3.95 1.08 5.6 0" stroke="#087fc2" stroke-width="1.35" stroke-linecap="round"/></svg>`;
+  // SOOP에서 제공하는 공식 favicon을 그대로 쓴다.
+  const img = document.createElement("img");
+  img.src = "https://res.sooplive.com/favicon.ico";
+  img.alt = "";
+  mark.append(img);
   return mark;
 }
 
@@ -531,6 +543,7 @@ function signOut() {
   $("claimView").hidden = true;
   $("mainView").hidden = true;
   $("profileView").hidden = true;
+  $("profileMenu").hidden = true;
   $("whoami").hidden = true;
   loadProviders();
 }
@@ -547,7 +560,7 @@ async function loadProviders() {
         class: p.id === "soop" ? "primary oauth-soop" : "primary",
         onclick: () => {
           // 웹에서는 서버 콜백이 이 페이지로 되돌아온다.
-          const back = location.origin + "/";
+          const back = location.origin + location.pathname;
           location.href = `/api/oauth/${p.id}/start?redirect_uri=${encodeURIComponent(back)}`;
         },
       });
@@ -575,18 +588,22 @@ function myOrderTable(orders) {
       : isCancelled ? ["warn", "환불 완료"] : ["bad", "거절"];
     const amount = isFulfilled ? `-${fmtNum(o.totalPrice)}`
       : isCancelled ? `+${fmtNum(o.totalPrice)}` : "—";
+    const cancel = isFulfilled && o.marketOpen
+      ? el("button", { class: "sm danger", text: "구매 취소", onclick: () => cancelMyOrder(o.id) })
+      : el("span", { class: "small muted", text: "—" });
     tb.append(el("tr", {},
       el("td", { class: "small muted", text: fmtDate(o.orderedAt) }),
       el("td", { text: o.marketTitle ? `${o.marketTitle} (${o.streamerId})` : o.streamerId }),
       el("td", { text: detail }),
       el("td", { class: "n " + (isFulfilled ? "neg" : isCancelled ? "pos" : ""), text: amount }),
-      el("td", {}, el("span", { class: `badge ${state[0]}`, text: state[1] }))));
+      el("td", {}, el("span", { class: `badge ${state[0]}`, text: state[1] })),
+      el("td", {}, cancel)));
   }
   return el("div", { class: "table-wrap" },
     el("table", {},
       el("thead", {}, el("tr", {},
         el("th", { text: "구매 시각" }), el("th", { text: "시장" }), el("th", { text: "보상" }),
-        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }))), tb));
+        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }), el("th", { text: "" }))), tb));
 }
 
 async function openProfile() {
@@ -597,8 +614,21 @@ async function openProfile() {
   catch (e) { box.textContent = `구매 내역을 불러오지 못했습니다: ${e.message}`; }
 }
 
-$("profileButton").addEventListener("click", openProfile);
-$("profileClose").addEventListener("click", () => { $("profileView").hidden = true; });
+async function cancelMyOrder(id) {
+  if (!confirm("이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 달란트는 즉시 환불됩니다.")) return;
+  try {
+    const result = await api(`/api/me/orders/${id}/cancel`, { method: "POST" });
+    msg("ok", `${fmtNum(result.order.totalPrice)} 달란트를 환불했습니다.`);
+    openProfile();
+  } catch (e) { msg("bad", e.message); openProfile(); }
+}
+
+$("profileButton").addEventListener("click", (e) => {
+  e.stopPropagation();
+  $("profileMenu").hidden = !$("profileMenu").hidden;
+});
+document.addEventListener("click", () => { $("profileMenu").hidden = true; });
+$("profileClose").addEventListener("click", () => { location.href = "/"; });
 
 // ── 탭 ───────────────────────────────────────────────────────────────
 document.querySelectorAll("nav.tabs button").forEach((b) => {
@@ -1342,6 +1372,14 @@ async function start() {
   avatar.onerror = () => { avatar.hidden = true; };
   if (me.profileImage) avatar.src = me.profileImage;
   $("whoami").hidden = false;
+
+  if (location.pathname === "/orders") {
+    stopConnPolling();
+    $("claimView").hidden = true;
+    $("mainView").hidden = true;
+    openProfile();
+    return;
+  }
 
   if (!me.approvedBid) {
     // 시청자는 시장 링크에서만 구매하며, 방송국 관리는 명시적으로 활성화한 뒤에만 연다.

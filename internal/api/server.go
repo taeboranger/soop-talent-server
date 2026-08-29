@@ -81,6 +81,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/logout", s.session(s.handleLogout))
 	mux.Handle("GET /api/me", s.session(s.handleMe))
 	mux.Handle("GET /api/me/orders", s.session(s.handleMyOrders))
+	mux.Handle("POST /api/me/orders/{id}/cancel", s.session(s.handleMyOrderCancel))
 	mux.Handle("POST /api/streamer/activate", s.session(s.handleActivateStreamer))
 	mux.Handle("POST /api/claim", s.session(s.handleSubmitClaim))
 	mux.Handle("GET /api/claims", s.session(s.handleMyClaims))
@@ -100,6 +101,7 @@ func (s *Server) Routes() http.Handler {
 
 	// 스트리머 대시보드 (웹)
 	mux.Handle("GET /market/{token}", s.marketPage())
+	mux.Handle("GET /orders", s.ordersPage())
 	mux.Handle("GET /", s.dashboardPage())
 	mux.Handle("GET /welcome", s.welcomePage())
 	mux.Handle("GET /guide", s.guidePage())
@@ -268,6 +270,24 @@ func (s *Server) handleMyOrders(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeJSON(w, http.StatusOK, orders)
+	return nil
+}
+
+// handleMyOrderCancel은 프로필 구매내역에서 온 취소다. 주문 대상은 경로에 있어도
+// 소유자는 세션의 SOOP ID로 강제되므로 다른 사람 구매를 취소할 수 없다.
+func (s *Server) handleMyOrderCancel(w http.ResponseWriter, r *http.Request) error {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		return httpError{http.StatusBadRequest, "잘못된 구매 번호입니다."}
+	}
+	result, err := shop.CancelOrder(r.Context(), s.Store.Pool, id, accountOf(r).SoopID, "")
+	if errors.Is(err, shop.ErrMarketClosed) {
+		return httpError{http.StatusGone, err.Error()}
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, result)
 	return nil
 }
 
