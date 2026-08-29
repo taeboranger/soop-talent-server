@@ -34,16 +34,34 @@ type CheckoutResult struct {
 	Replayed bool   `json:"replayed"`
 }
 
-// OpenWeb은 게시글 연결 없이 시장을 열고, 추측할 수 없는 공유 링크 토큰을 만든다.
+// ViewerOrder는 시청자 프로필에 보여 줄 본인 구매 이력이다. 주문의 세부 내용에
+// 시장 제목과 스트리머 ID만 덧붙인다. 공유 링크 토큰이나 다른 시청자 정보는 없다.
+type ViewerOrder struct {
+	Order
+	PageID      int64  `json:"pageId"`
+	MarketTitle string `json:"marketTitle"`
+	StreamerID  string `json:"streamerId"`
+}
+
+// CancelResult는 시장 취소로 되돌린 주문·달란트 합계다.
+// 주문 행을 지우지 않고 cancelled 상태로 남겨, 스트리머가 누구에게 무엇을
+// 환불했는지 나중에도 확인할 수 있다.
+type CancelResult struct {
+	Page            *Page `json:"page"`
+	RefundedOrders  int   `json:"refundedOrders"`
+	RefundedTalents int   `json:"refundedTalents"`
+}
+
+// OpenWeb은 게시글 연결 없이 시장을 연다. 초안은 새 공유 링크 토큰을 만들고,
+// 단순히 닫은 시장은 기존 토큰·구매 기록을 유지한 채 다시 연다. 취소·환불된 시장도
+// 같은 링크로 다시 열 수 있는데, 취소 주문은 재고·인당 제한 계산에서 제외되어 새
+// 시장처럼 다시 구매할 수 있다.
 func OpenWeb(ctx context.Context, pool *store.DB, bid string, pageID int64) (*Page, error) {
 	p, err := Get(ctx, pool, bid, pageID)
 	if err != nil {
 		return nil, err
 	}
-	if p.Status == StatusClosed {
-		return nil, ErrClosed
-	}
-	if p.Status != StatusDraft {
+	if p.Status != StatusDraft && p.Status != StatusClosed && p.Status != StatusCancelled {
 		return nil, ErrNotDraft
 	}
 	if len(p.Items) == 0 {
@@ -51,18 +69,18 @@ func OpenWeb(ctx context.Context, pool *store.DB, bid string, pageID int64) (*Pa
 	}
 
 	for range 4 {
-		token, err := newPublicToken()
-		if err != nil {
-			return nil, err
+		token := p.PublicToken
+		if token == "" {
+			token, err = newPublicToken()
+			if err != nil {
+				return nil, err
+			}
 		}
 		tag, err := pool.Exec(ctx, `
 			UPDATE shop_pages
-			   SET status = 'open', public_token = $3, opened_at = NOW(6)
-			 WHERE id = $1 AND bid = $2 AND status = 'draft'`, pageID, bid, token)
+			   SET status = 'open', public_token = $3, opened_at = NOW(6), closed_at = NULL
+			 WHERE id = $1 AND bid = $2 AND status IN ('draft','closed','cancelled')`, pageID, bid, token)
 		if err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "shop_pages_one_open_per_bid") {
-				return nil, ErrAlreadyOpen
-			}
 			// 충돌은 사실상 토큰 중복뿐이다. 새 토큰으로 한 번 더 시도한다.
 			if strings.Contains(strings.ToLower(err.Error()), "shop_pages_public_token_uniq") {
 				continue
@@ -70,7 +88,7 @@ func OpenWeb(ctx context.Context, pool *store.DB, bid string, pageID int64) (*Pa
 			return nil, err
 		}
 		if n, _ := tag.RowsAffected(); n == 0 {
-			return nil, ErrNotDraft
+			return nil, apperr.New("시장을 다시 열 수 없습니다. 현재 상태를 새로고침해 주세요")
 		}
 		return Get(ctx, pool, bid, pageID)
 	}
@@ -83,6 +101,94 @@ func newPublicToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// CancelWeb은 열린 시장을 취소하고, 이미 확정된 모든 구매 달란트를 원자적으로
+// 되돌린다. 페이지 행을 먼저 잠그므로 결제와 취소가 동시에 들어와도 하나가 끝난
+// 뒤의 상태만 보게 된다.
+func CancelWeb(ctx context.Context, pool *store.DB, bid string, pageID int64) (*CancelResult, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var p Page
+	err = tx.QueryRow(ctx, `
+		SELECT id,bid,title,status FROM shop_pages WHERE id=$1 AND bid=$2 FOR UPDATE`, pageID, bid).
+		Scan(&p.ID, &p.BID, &p.Title, &p.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != StatusOpen {
+		return nil, ErrNotOpen
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT id,user_id,total_price FROM purchase_orders
+		 WHERE page_id=$1 AND status='fulfilled' FOR UPDATE`, pageID)
+	if err != nil {
+		return nil, err
+	}
+	type purchase struct {
+		id     int64
+		userID string
+		price  int
+	}
+	orders := []purchase{}
+	for rows.Next() {
+		var o purchase
+		if err := rows.Scan(&o.id, &o.userID, &o.price); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	result := &CancelResult{RefundedOrders: len(orders)}
+	for _, o := range orders {
+		if o.price > 0 {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO point_events (bid,user_id,kind,amount,occurred_at,idem_key,meta,reason)
+				VALUES ($1,$2,$3,$4,NOW(6),$5,$6,$7)
+				ON DUPLICATE KEY UPDATE idem_key=idem_key`,
+				p.BID, o.userID, scoring.KindPurchaseRefund, o.price,
+				fmt.Sprintf("purchase-refund:%d", o.id),
+				fmt.Sprintf(`{"pageId":%d,"orderId":%d}`, p.ID, o.id),
+				fmt.Sprintf("%s 시장 취소 환불", p.Title)); err != nil {
+				return nil, err
+			}
+			result.RefundedTalents += o.price
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE purchase_orders
+			   SET status='cancelled', reject_reason='시장 취소로 전액 환불됨'
+			 WHERE id=$1 AND status='fulfilled'`, o.id); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE shop_pages SET status='cancelled', closed_at=NOW(6)
+		 WHERE id=$1 AND bid=$2 AND status='open'`, p.ID, p.BID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	page, err := Get(ctx, pool, bid, pageID)
+	if err != nil {
+		return nil, err
+	}
+	result.Page = page
+	return result, nil
 }
 
 // PublicPage은 공유 링크 토큰으로 열린 시장을 가져온다. 닫힌 링크에는 어떤
@@ -299,9 +405,9 @@ func OrderByID(ctx context.Context, pool *store.DB, id int64) (*Order, error) {
 	var o Order
 	err := pool.QueryRow(ctx, `
 		SELECT id,user_id,COALESCE(nickname,''),COALESCE(comment_no,0),COALESCE(raw_comment,''),
-		       total_price,status,COALESCE(reject_reason,''),commented_at
+		       total_price,status,COALESCE(reject_reason,''),commented_at,settled_at
 		  FROM purchase_orders WHERE id=$1`, id).
-		Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment, &o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt)
+		Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment, &o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt, &o.OrderedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -321,4 +427,65 @@ func OrderByID(ctx context.Context, pool *store.DB, id int64) (*Order, error) {
 		o.Lines = append(o.Lines, line)
 	}
 	return &o, rows.Err()
+}
+
+// ViewerOrders는 한 SOOP 계정의 구매 이력만 최신순으로 읽는다. 호출자는 API에서
+// 세션에 들어 있는 SOOP ID로 고정되므로, 전달받은 값으로 타인의 주문을 찾지 않는다.
+func ViewerOrders(ctx context.Context, pool *store.DB, userID string) ([]ViewerOrder, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return []ViewerOrder{}, nil
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT o.id,o.user_id,COALESCE(o.nickname,''),COALESCE(o.comment_no,0),COALESCE(o.raw_comment,''),
+		       o.total_price,o.status,COALESCE(o.reject_reason,''),o.commented_at,o.settled_at,
+		       p.id,p.title,p.bid
+		  FROM purchase_orders o JOIN shop_pages p ON p.id=o.page_id
+		 WHERE o.user_id=$1
+		 ORDER BY o.settled_at DESC,o.id DESC
+		 LIMIT 500`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []ViewerOrder{}
+	index := map[int64]int{}
+	for rows.Next() {
+		var o ViewerOrder
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment,
+			&o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt, &o.OrderedAt,
+			&o.PageID, &o.MarketTitle, &o.StreamerID); err != nil {
+			return nil, err
+		}
+		index[o.ID] = len(out)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+
+	lines, err := pool.Query(ctx, `
+		SELECT l.order_id,l.item_name,l.quantity,l.unit_price
+		  FROM purchase_lines l JOIN purchase_orders o ON o.id=l.order_id
+		 WHERE o.user_id=$1
+		 ORDER BY l.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer lines.Close()
+	for lines.Next() {
+		var id int64
+		var line Line
+		if err := lines.Scan(&id, &line.ItemName, &line.Quantity, &line.UnitPrice); err != nil {
+			return nil, err
+		}
+		if i, ok := index[id]; ok {
+			out[i].Lines = append(out[i].Lines, line)
+		}
+	}
+	return out, lines.Err()
 }

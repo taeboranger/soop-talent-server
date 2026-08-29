@@ -472,4 +472,196 @@ func TestOpenPostNos_초안제외(t *testing.T) {
 	}
 }
 
+// 열린 시장에는 새 보상만 더할 수 있고, 기존 가격은 바뀌지 않아야 한다.
+func TestAddItems_열린시장에는추가만(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	page, bid := setupPage(t, pool, []Item{{Name: "기존 보상", Price: 100}})
+
+	updated, err := AddItems(ctx, pool, bid, page.ID, []Item{{Name: "새 보상", Price: 250, Stock: ptr(3)}})
+	if err != nil {
+		t.Fatalf("보상 추가: %v", err)
+	}
+	if len(updated.Items) != 2 || updated.Items[0].Name != "기존 보상" || updated.Items[0].Price != 100 {
+		t.Fatalf("기존 보상 가격이 보존되지 않음: %+v", updated.Items)
+	}
+	if updated.Items[1].Name != "새 보상" || updated.Items[1].Price != 250 {
+		t.Fatalf("새 보상 = %+v", updated.Items[1])
+	}
+	if _, err := AddItems(ctx, pool, bid, page.ID, []Item{{Name: "기존 보상", Price: 999}}); err == nil {
+		t.Fatal("기존 보상과 같은 이름을 추가할 수 있으면 안 됨")
+	}
+}
+
+// 시장 취소는 이미 차감한 달란트와 주문 상태를 한 트랜잭션으로 되돌려야 한다.
+func TestCancelWeb_확정구매전액환불(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	page, bid := setupPage(t, pool, []Item{{Name: "굿즈", Price: 300}})
+	give(t, pool, bid, "buyer", 1000)
+
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO purchase_orders (page_id,bid,user_id,nickname,comment_no,raw_comment,total_price,status)
+		VALUES ($1,$2,'buyer','구매자',987654,'구매',300,'fulfilled')`, page.ID, bid)
+	if err != nil {
+		t.Fatalf("구매 기록: %v", err)
+	}
+	orderID, err := tag.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO purchase_lines (order_id,item_id,item_name,quantity,unit_price)
+		VALUES ($1,$2,'굿즈',1,300)`, orderID, page.Items[0].ID); err != nil {
+		t.Fatalf("구매 항목: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO point_events (bid,user_id,kind,amount,occurred_at,idem_key,reason)
+		VALUES ($1,'buyer','purchase',-300,NOW(6),'purchase:test-cancel','테스트 구매')`, bid); err != nil {
+		t.Fatalf("구매 차감: %v", err)
+	}
+	if got := balanceOf(t, pool, bid, "buyer"); got != 700 {
+		t.Fatalf("취소 전 잔액 = %d, want 700", got)
+	}
+
+	result, err := CancelWeb(ctx, pool, bid, page.ID)
+	if err != nil {
+		t.Fatalf("시장 취소: %v", err)
+	}
+	if result.Page.Status != StatusCancelled || result.RefundedOrders != 1 || result.RefundedTalents != 300 {
+		t.Fatalf("취소 결과 = %+v", result)
+	}
+	if got := balanceOf(t, pool, bid, "buyer"); got != 1000 {
+		t.Errorf("환불 후 잔액 = %d, want 1000", got)
+	}
+	orders, err := Orders(ctx, pool, page.ID)
+	if err != nil || len(orders) != 1 || orders[0].Status != "cancelled" {
+		t.Fatalf("환불 주문 상태 = %+v, %v", orders, err)
+	}
+	if _, err := CancelWeb(ctx, pool, bid, page.ID); err == nil {
+		t.Fatal("취소된 시장을 다시 취소할 수 있으면 안 됨")
+	}
+}
+
+// 단순 종료는 판매를 잠시 멈추는 상태다. 재개해도 공유 링크·기존 구매·수량 제한이
+// 바뀌면 안 된다. 전액 환불 시장은 이전 주문이 모두 취소된 뒤 새 시장처럼 재개된다.
+func TestOpenWeb_닫은시장은같은링크로다시열린다(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	bid := fmt.Sprintf("test_reopen_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, `INSERT INTO streamers (bid) VALUES ($1)`, bid); err != nil {
+		t.Fatalf("스트리머 생성: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM streamers WHERE bid = $1`, bid)
+	})
+
+	p, err := Create(ctx, pool, bid, "재개 시장", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetItems(ctx, pool, bid, p.ID, []Item{{Name: "보상", Price: 100, Stock: ptr(3)}}); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := OpenWeb(ctx, pool, bid, p.ID)
+	if err != nil {
+		t.Fatalf("시장 열기: %v", err)
+	}
+	if opened.PublicToken == "" {
+		t.Fatal("공유 링크 토큰이 없습니다")
+	}
+	if _, err := MarkClosed(ctx, pool, bid, p.ID); err != nil {
+		t.Fatalf("시장 닫기: %v", err)
+	}
+	reopened, err := OpenWeb(ctx, pool, bid, p.ID)
+	if err != nil {
+		t.Fatalf("시장 다시 열기: %v", err)
+	}
+	if reopened.Status != StatusOpen || reopened.ClosedAt != nil {
+		t.Fatalf("재개 상태 = status:%s closedAt:%v", reopened.Status, reopened.ClosedAt)
+	}
+	if reopened.PublicToken != opened.PublicToken {
+		t.Fatalf("재개 뒤 링크가 바뀜: %q != %q", reopened.PublicToken, opened.PublicToken)
+	}
+	if _, err := CancelWeb(ctx, pool, bid, p.ID); err != nil {
+		t.Fatalf("시장 취소: %v", err)
+	}
+	refunded, err := OpenWeb(ctx, pool, bid, p.ID)
+	if err != nil {
+		t.Fatalf("취소·환불 시장 다시 열기: %v", err)
+	}
+	if refunded.Status != StatusOpen || refunded.PublicToken != opened.PublicToken {
+		t.Fatalf("환불 뒤 재개 결과 = %+v", refunded)
+	}
+}
+
+// 방송국별 동시 오픈 제한을 없앴다. 서로 다른 시장의 재고·구매 기록은 페이지 ID로
+// 분리되므로, 여러 링크가 동시에 열려도 주문이 섞이면 안 된다.
+func TestOpenWeb_여러시장을동시에열수있다(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	bid := fmt.Sprintf("test_multi_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, `INSERT INTO streamers (bid) VALUES ($1)`, bid); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM streamers WHERE bid = $1`, bid)
+	})
+	makePage := func(title string) *Page {
+		p, err := Create(ctx, pool, bid, title, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetItems(ctx, pool, bid, p.ID, []Item{{Name: title + " 보상", Price: 10}}); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first, second := makePage("첫 시장"), makePage("둘째 시장")
+	if _, err := OpenWeb(ctx, pool, bid, first.ID); err != nil {
+		t.Fatalf("첫 시장 열기: %v", err)
+	}
+	opened, err := OpenWeb(ctx, pool, bid, second.ID)
+	if err != nil {
+		t.Fatalf("둘째 시장 동시 열기: %v", err)
+	}
+	if opened.Status != StatusOpen || opened.PublicToken == "" {
+		t.Fatalf("둘째 시장 상태 = %+v", opened)
+	}
+}
+
+func TestViewerOrders_본인주문과보상상세만돌려준다(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	page, bid := setupPage(t, pool, []Item{{Name: "상세 보상", Price: 70}})
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO purchase_orders (page_id,bid,user_id,nickname,total_price,status)
+		VALUES ($1,$2,'viewer','시청자',70,'fulfilled')`, page.ID, bid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := tag.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO purchase_lines (order_id,item_id,item_name,quantity,unit_price)
+		VALUES ($1,$2,'상세 보상',2,35)`, id, page.Items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO purchase_orders (page_id,bid,user_id,nickname,total_price,status)
+		VALUES ($1,$2,'other','다른 사람',1,'fulfilled')`, page.ID, bid); err != nil {
+		t.Fatal(err)
+	}
+	orders, err := ViewerOrders(ctx, pool, "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 1 || orders[0].MarketTitle != page.Title || orders[0].StreamerID != bid ||
+		len(orders[0].Lines) != 1 || orders[0].Lines[0].Quantity != 2 {
+		t.Fatalf("시청자 구매 내역 = %+v", orders)
+	}
+}
+
 func ptr(n int) *int { return &n }

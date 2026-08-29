@@ -76,6 +76,8 @@
   .stack { display:flex; flex-direction:column; gap:12px; }
   .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .account { display:inline-flex; align-items:center; gap:7px; min-width:0; }
+  button.account { padding:3px 5px; border-color:transparent; background:transparent; text-align:left; }
+  button.account:hover:not(:disabled) { background:var(--accent-soft); border-color:var(--line); }
   .account .avatar { width:27px; height:27px; border-radius:50%; object-fit:cover;
                      border:1px solid var(--line); background:var(--bg-inset); }
   .account .name { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -221,16 +223,27 @@
       <h1>SoopTalent</h1>
     </a>
     <div class="row" id="whoami" hidden>
-      <span class="account small" id="meAccount">
+      <button class="account small" id="profileButton" type="button" title="구매내역 보기">
         <img class="avatar" id="meAvatar" alt="" hidden>
         <span class="name" id="meLabel"></span>
-      </span>
+      </button>
       <span class="badge info" id="bidBadge" hidden></span>
       <button class="sm" id="logout">로그아웃</button>
     </div>
   </header>
 
   <div id="message" class="notice"></div>
+
+  <!-- ── 내 구매내역 ─────────────────────────────────────────────────── -->
+  <section id="profileView" hidden>
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between">
+        <div><h2 style="margin-bottom:2px">내 구매내역</h2><p class="small muted" style="margin:0">내 SOOP 계정으로 구매한 달란트 시장 내역입니다.</p></div>
+        <button class="sm" id="profileClose" type="button">닫기</button>
+      </div>
+      <div id="myOrders" class="muted small">구매 내역을 불러오는 중…</div>
+    </div>
+  </section>
 
   <!-- ── 로그인 ─────────────────────────────────────────────────────── -->
   <section id="authView" hidden>
@@ -314,6 +327,7 @@
             <option value="board_comment">댓글 작성</option>
             <option value="manual">직접 지급</option>
             <option value="purchase">보상 교환</option>
+			<option value="purchase_refund">시장 취소 환불</option>
           </select>
           <button id="logSearch">조회</button>
         </div>
@@ -451,6 +465,7 @@ const KEY = "sooptalent.token";
 let token = localStorage.getItem(KEY) || "";
 let me = null;
 let logCursor = 0;
+let claimTimer = null;
 
 function msg(kind, text) {
   const el = $("message");
@@ -509,9 +524,13 @@ function signOut() {
   token = ""; me = null;
   localStorage.removeItem(KEY);
   stopConnPolling();
+  stopShopOrderPolling();
+  if (claimTimer) clearTimeout(claimTimer);
+  claimTimer = null;
   $("authView").hidden = false;
   $("claimView").hidden = true;
   $("mainView").hidden = true;
+  $("profileView").hidden = true;
   $("whoami").hidden = true;
   loadProviders();
 }
@@ -544,6 +563,43 @@ $("logout").addEventListener("click", async () => {
   signOut();
 });
 
+function myOrderTable(orders) {
+  if (!orders.length) return el("div", { class: "empty", text: "아직 구매한 보상이 없습니다." });
+  const tb = el("tbody");
+  for (const o of orders) {
+    const isFulfilled = o.status === "fulfilled";
+    const isCancelled = o.status === "cancelled";
+    const detail = (o.lines ?? []).map((l) => l.quantity > 1 ? `${l.itemName} x${l.quantity}` : l.itemName).join(", ")
+      || o.rejectReason || "—";
+    const state = isFulfilled ? ["ok", "확정"]
+      : isCancelled ? ["warn", "환불 완료"] : ["bad", "거절"];
+    const amount = isFulfilled ? `-${fmtNum(o.totalPrice)}`
+      : isCancelled ? `+${fmtNum(o.totalPrice)}` : "—";
+    tb.append(el("tr", {},
+      el("td", { class: "small muted", text: fmtDate(o.orderedAt) }),
+      el("td", { text: o.marketTitle ? `${o.marketTitle} (${o.streamerId})` : o.streamerId }),
+      el("td", { text: detail }),
+      el("td", { class: "n " + (isFulfilled ? "neg" : isCancelled ? "pos" : ""), text: amount }),
+      el("td", {}, el("span", { class: `badge ${state[0]}`, text: state[1] }))));
+  }
+  return el("div", { class: "table-wrap" },
+    el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", { text: "구매 시각" }), el("th", { text: "시장" }), el("th", { text: "보상" }),
+        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }))), tb));
+}
+
+async function openProfile() {
+  $("profileView").hidden = false;
+  const box = $("myOrders");
+  box.replaceChildren(el("span", { class: "muted small", text: "구매 내역을 불러오는 중…" }));
+  try { box.replaceChildren(myOrderTable(await api("/api/me/orders"))); }
+  catch (e) { box.textContent = `구매 내역을 불러오지 못했습니다: ${e.message}`; }
+}
+
+$("profileButton").addEventListener("click", openProfile);
+$("profileClose").addEventListener("click", () => { $("profileView").hidden = true; });
+
 // ── 탭 ───────────────────────────────────────────────────────────────
 document.querySelectorAll("nav.tabs button").forEach((b) => {
   b.addEventListener("click", () => {
@@ -552,6 +608,7 @@ document.querySelectorAll("nav.tabs button").forEach((b) => {
     document.querySelectorAll(".tabpane")
       .forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
     msg(null);
+    if (b.dataset.tab !== "shop") stopShopOrderPolling();
     if (b.dataset.tab === "log") loadLog(true);
     if (b.dataset.tab === "shop") loadPages();
     if (b.dataset.tab === "rules") loadRules();
@@ -766,6 +823,8 @@ async function loadRecentGrants() {
 
 // ── 달란트 시장 ──────────────────────────────────────────────────────
 let selectedPageId = null;
+let shopOrderTimer = null;
+const SHOP_ORDER_POLL_MS = 5000;
 
 $("createPage").addEventListener("click", async () => {
   const title = $("newPageTitle").value.trim();
@@ -799,6 +858,7 @@ const STATUS_BADGE = {
   draft:  ["warn", "작성 중"],
   open:   ["ok",   "열림"],
   closed: ["bad",  "닫힘"],
+  cancelled: ["bad", "취소·환불"],
 };
 
 function renderPageList(pages) {
@@ -830,6 +890,8 @@ function renderPageList(pages) {
 }
 
 function renderPageDetail(p) {
+  // 선택 페이지나 시장 상태가 바뀌면, 이전 페이지의 폴링은 반드시 멈춘다.
+  stopShopOrderPolling();
   const box = $("pageDetail");
   box.replaceChildren();
 
@@ -990,47 +1052,181 @@ function draftBody(p) {
       })));
 }
 
+function openAddItemsBody(p) {
+  const items = el("div", { class: "stack" });
+  const readItems = () => [...items.querySelectorAll(".item-row")].map((r) => {
+    const g = (f) => r.querySelector(`[data-f=${f}]`).value.trim();
+    const stock = g("stock");
+    const perUser = g("perUserLimit");
+    const imageId = g("imageId");
+    return {
+      name: g("name"), price: Number(g("price") || 0),
+      stock: stock === "" ? null : Number(stock),
+      perUserLimit: perUser === "" ? null : Number(perUser),
+      imageId: imageId === "" ? null : Number(imageId),
+    };
+  }).filter((x) => x.name);
+
+  const add = () => items.append(itemRow());
+  const save = async (btn) => {
+    const additions = readItems();
+    if (!additions.length) { msg("warn", "추가할 보상을 입력해 주세요."); return; }
+    btn.disabled = true;
+    try {
+      await api(`/api/shop/pages/${p.id}/items`, {
+        method: "POST", body: JSON.stringify({ items: additions }),
+      });
+      msg("ok", "새 보상을 시장에 추가했습니다. 기존 보상 가격은 바뀌지 않았습니다.");
+      loadPages();
+    } catch (e) { msg("bad", e.message); btn.disabled = false; }
+  };
+
+  return el("div", { class: "stack" },
+    el("h3", { style: "margin:8px 0 0", text: "보상 추가" }),
+    el("p", { class: "small muted", style: "margin:0",
+      text: "열린 시장에는 새 보상만 추가할 수 있습니다. 기존 보상 이름·가격·수량 제한은 구매 조건 보호를 위해 수정할 수 없습니다." }),
+    el("div", { class: "item-row small muted" },
+      el("span", { text: "사진" }), el("span", { text: "보상 이름" }),
+      el("span", { text: "가격" }), el("span", { text: "총 수량" }),
+      el("span", { text: "인당 제한" }), el("span", {})),
+    items,
+    el("div", { class: "row" },
+      el("button", { class: "sm", text: "+ 새 보상 입력", onclick: add }),
+      el("button", { class: "sm primary", text: "보상 추가", onclick: (e) => save(e.target) })));
+}
+
+function loadOrderList(pageID, box) {
+  return api(`/api/shop/pages/${pageID}/orders`)
+    .then((list) => box.replaceChildren(orderTable(list)))
+    .catch((err) => { box.textContent = `구매 내역을 불러오지 못했습니다: ${err.message}`; });
+}
+
+function stopShopOrderPolling() {
+  if (shopOrderTimer) clearInterval(shopOrderTimer);
+  shopOrderTimer = null;
+}
+
+function startShopOrderPolling(pageID, box) {
+  const refresh = () => {
+    if (document.visibilityState !== "visible" || selectedPageId !== pageID) return;
+    loadOrderList(pageID, box);
+  };
+  refresh();
+  shopOrderTimer = setInterval(refresh, SHOP_ORDER_POLL_MS);
+}
+
+async function downloadOrdersXLSX(p, btn) {
+  const before = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "만드는 중…";
+  try {
+    const res = await fetch(`/api/shop/pages/${p.id}/orders.xlsx`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error || `엑셀 파일을 만들지 못했습니다 (HTTP ${res.status})`);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sooptalent-market-${p.id}-orders.xlsx`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    msg("bad", e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = before;
+  }
+}
+
+function ordersHeader(p, live = false) {
+  return el("div", { class: "row", style: "justify-content:space-between;margin-top:6px" },
+    el("div", {},
+      el("h3", { style: "margin:0", text: live ? "실시간 구매 내역" : "구매 내역" }),
+      live ? el("span", { class: "small muted", text: "5초마다 새 구매를 확인합니다." }) : null),
+    el("button", { class: "sm", text: "엑셀 다운로드", onclick: (e) => downloadOrdersXLSX(p, e.target) }));
+}
+
 function openBody(p) {
   const link = `${location.origin}/market/${p.publicToken}`;
-  return el("div", { class: "stack" },
+  const orders = el("div", { class: "muted small", text: "구매 내역을 불러오는 중…" });
+  const body = el("div", { class: "stack" },
     itemTable(p.items),
+    openAddItemsBody(p),
     el("div", { class: "notice", style: "margin:0" },
       el("b", { text: "공유 링크" }), el("br"),
       el("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: link }),
       el("button", { class: "sm", style: "margin-left:8px", text: "복사", onclick: () => {
         navigator.clipboard?.writeText(link).then(() => msg("ok", "시장 링크를 복사했습니다.")).catch(() => msg("warn", "링크를 직접 복사해 주세요."));
       }})),
+    ordersHeader(p, true),
+    orders,
     el("div", { class: "notice warn", style: "margin:0" },
-      "시청자는 이 링크에서 로그인 후 바로 구매합니다. 페이지를 닫으면 링크로 더 이상 접근하거나 구매할 수 없으며, 다시 열 수 없습니다."),
+      "시장 닫기는 구매를 확정한 채 접근만 막습니다. 시장 취소를 선택하면 모든 확정 구매의 달란트가 시청자에게 전액 환불됩니다."),
     el("div", { class: "row" },
       el("button", {
-        class: "primary", text: "시장 닫기",
+        class: "primary", text: "시장 닫기 (구매 확정)",
         onclick: async (e) => {
-          if (!confirm("시장을 닫으면 시청자가 더 이상 접속하거나 구매할 수 없습니다. 다시 열 수 없습니다. 계속할까요?")) return;
+          if (!confirm("시장을 닫으면 시청자가 더 이상 접속하거나 구매할 수 없습니다. 이미 확정된 구매는 유지됩니다. 필요하면 나중에 같은 링크로 다시 열 수 있습니다. 계속할까요?")) return;
           e.target.disabled = true;
           try {
             await api(`/api/shop/pages/${p.id}/close`, { method: "POST" });
-            msg("ok", "시장을 닫았습니다. 공유 링크에서는 종료 안내가 표시됩니다.");
+            msg("ok", "시장을 닫았습니다. 확정된 구매는 그대로 유지됩니다.");
+            loadPages();
+          } catch (err) { msg("bad", err.message); e.target.disabled = false; }
+        },
+      }),
+      el("button", {
+        class: "danger", text: "시장 취소 · 전액 환불",
+        onclick: async (e) => {
+          if (!confirm("시장을 취소할까요?\n\n현재까지 확정된 모든 구매의 달란트가 각 시청자에게 전액 환불됩니다. 나중에 다시 열면 환불된 주문은 새 시장의 재고·인당 제한에 포함되지 않습니다.")) return;
+          e.target.disabled = true;
+          try {
+            const result = await api(`/api/shop/pages/${p.id}/cancel`, { method: "POST" });
+            msg("ok", `시장을 취소했습니다. ${fmtNum(result.refundedOrders)}건, ${fmtNum(result.refundedTalents)} 달란트를 전액 환불했습니다.`);
             loadPages();
           } catch (err) { msg("bad", err.message); e.target.disabled = false; }
         },
       })));
+  startShopOrderPolling(p.id, orders);
+  return body;
 }
 
 function closedBody(p) {
   const orders = el("div", { class: "muted small", text: "구매 내역을 불러오는 중…" });
+  const cancelled = p.status === "cancelled";
+  const reopen = async (btn) => {
+    const restarting = p.status === "cancelled";
+    const description = restarting
+      ? "환불 완료된 이전 주문은 재고·인당 구매 제한에 포함되지 않습니다. 새 구매부터 다시 계산됩니다."
+      : "기존 구매 내역과 재고·인당 구매 제한은 유지됩니다.";
+    if (!confirm(`이 시장을 다시 열까요?\n\n${description}\n같은 공유 링크로 다시 구매할 수 있게 됩니다.`)) return;
+    btn.disabled = true;
+    try {
+      const opened = await api(`/api/shop/pages/${p.id}/open`, { method: "POST" });
+      const link = `${location.origin}/market/${opened.publicToken}`;
+      msg("ok", `${restarting ? "환불 후 시장을 다시 열었습니다." : "시장을 다시 열었습니다."} 기존 공유 링크를 다시 게시해 주세요: ${link}`);
+      loadPages();
+    } catch (err) { msg("bad", err.message); btn.disabled = false; }
+  };
   const box = el("div", { class: "stack" },
     el("p", { class: "small muted", style: "margin:0",
-              text: `${fmtDate(p.closedAt)} 에 닫힘` }),
+              text: `${fmtDate(p.closedAt)} 에 ${cancelled ? "취소·환불 처리" : "닫힘"}` }),
     itemTable(p.items),
-    el("h3", { style: "margin:6px 0 0", text: "구매 내역" }),
-    orders);
-
-  // 닫힌 페이지에서 보고 싶은 것은 결국 구매 내역이다. 클릭 없이 바로 보여 준다.
-  api(`/api/shop/pages/${p.id}/orders`)
-    .then((list) => orders.replaceWith(orderTable(list)))
-    .catch((err) => orders.textContent = `구매 내역을 불러오지 못했습니다: ${err.message}`);
-
+    ordersHeader(p),
+    orders,
+    el("div", { class: "stack" },
+      el("p", { class: "small muted", style: "margin:0",
+        text: cancelled
+          ? "환불 완료된 이전 주문은 재고·인당 구매 제한에 포함되지 않습니다. 같은 링크로 새 시장처럼 다시 열 수 있습니다."
+          : "기존 구매 내역·재고·인당 구매 제한을 유지한 채 같은 공유 링크로 다시 열 수 있습니다." }),
+      el("div", { class: "row" },
+        el("button", { class: "primary", text: cancelled ? "환불 후 시장 다시 열기" : "시장 다시 열기", onclick: (e) => reopen(e.target) }))));
+  loadOrderList(p.id, orders);
   return box;
 }
 
@@ -1058,25 +1254,29 @@ function itemTable(items) {
 }
 
 function orderTable(orders) {
-  if (!orders.length) return el("div", { class: "empty", text: "구매 신청이 없었습니다." });
+  if (!orders.length) return el("div", { class: "empty", text: "아직 구매 내역이 없습니다." });
   const tb = el("tbody");
   for (const o of orders) {
-    const detail = o.status === "fulfilled"
-      ? (o.lines ?? []).map((l) => l.quantity > 1 ? `${l.itemName} x${l.quantity}` : l.itemName).join(", ")
-      : o.rejectReason;
+    const isFulfilled = o.status === "fulfilled";
+    const isCancelled = o.status === "cancelled";
+    const detail = (o.lines ?? []).map((l) => l.quantity > 1 ? `${l.itemName} x${l.quantity}` : l.itemName).join(", ")
+      || o.rejectReason;
+    const state = isFulfilled ? ["ok", "확정"]
+      : isCancelled ? ["warn", "환불 완료"] : ["bad", "거절"];
+    const amount = isFulfilled ? `-${fmtNum(o.totalPrice)}`
+      : isCancelled ? `+${fmtNum(o.totalPrice)}` : "—";
     tb.append(el("tr", {},
+      el("td", { class: "small muted", text: fmtDate(o.orderedAt) }),
       el("td", { text: o.nickname ? `${o.nickname} (${o.userId})` : o.userId }),
       el("td", { text: detail }),
-      el("td", { class: "n " + (o.status === "fulfilled" ? "neg" : ""),
-                 text: o.status === "fulfilled" ? `-${fmtNum(o.totalPrice)}` : "—" }),
+      el("td", { class: "n " + (isFulfilled ? "neg" : isCancelled ? "pos" : ""), text: amount }),
       el("td", {}, el("span", {
-        class: `badge ${o.status === "fulfilled" ? "ok" : "bad"}`,
-        text: o.status === "fulfilled" ? "확정" : "거절" }))));
+        class: `badge ${state[0]}`, text: state[1] }))));
   }
   return el("div", { class: "table-wrap" },
     el("table", {},
       el("thead", {}, el("tr", {},
-        el("th", { text: "시청자" }), el("th", { text: "내용" }),
+        el("th", { text: "구매 시각" }), el("th", { text: "시청자" }), el("th", { text: "내용" }),
         el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }))),
       tb));
 }
@@ -1151,13 +1351,34 @@ async function start() {
     const pending = (me.claims ?? []).find((c) => c.status === "pending");
     const rejected = (me.claims ?? []).find((c) => c.status === "rejected");
     const box = $("claimStatus");
-    box.replaceChildren(el("div", { class: "notice", style: "margin:0",
-      text: "현재는 시청자 계정으로 로그인되어 있습니다. 시장 공유 링크를 받았다면 그 링크를 열어 보상을 구매하세요." }));
+    const activate = $("activateStreamer");
+    if (pending) {
+      box.replaceChildren(el("div", { class: "notice warn", style: "margin:0",
+        text: "스트리머 승인 신청이 접수되었습니다. 관리자가 승인하면 방송 추적·채팅 SDK·달란트 시장 관리 기능을 바로 사용할 수 있습니다." }));
+      activate.textContent = "스트리머 승인 대기 중";
+      activate.disabled = true;
+      // 관리자가 승인하면 새로고침을 요구하지 않고 스트리머 화면으로 전환한다.
+      if (claimTimer) clearTimeout(claimTimer);
+      claimTimer = setTimeout(() => {
+        claimTimer = null;
+        if (document.visibilityState === "visible") start();
+      }, 30000);
+    } else {
+      if (claimTimer) clearTimeout(claimTimer);
+      claimTimer = null;
+      const extra = rejected?.note ? ` 관리자 안내: ${rejected.note}` : "";
+      box.replaceChildren(el("div", { class: rejected ? "notice warn" : "notice", style: "margin:0",
+        text: `${rejected ? "이전 승인 신청이 반려되었습니다." : "현재는 시청자 계정으로 로그인되어 있습니다."} 시장 공유 링크를 받았다면 그 링크를 열어 보상을 구매하세요.${extra}` }));
+      activate.textContent = rejected ? "스트리머 승인 다시 신청" : "스트리머 승인 신청";
+      activate.disabled = false;
+    }
     return;
   }
 
   $("claimView").hidden = true;
   $("mainView").hidden = false;
+  if (claimTimer) clearTimeout(claimTimer);
+  claimTimer = null;
   $("bidBadge").textContent = me.approvedBid;
   $("bidBadge").hidden = false;
   loadOverview();
@@ -1170,7 +1391,7 @@ $("activateStreamer").addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {
     await api("/api/streamer/activate", { method: "POST" });
-    msg("ok", "내 방송국 관리 기능을 활성화했습니다.");
+    msg("ok", "스트리머 승인 신청을 보냈습니다. 관리자 승인 뒤 방송 관리 기능이 활성화됩니다.");
     start();
   } catch (err) { msg("bad", err.message); e.target.disabled = false; }
 });

@@ -32,14 +32,13 @@ import (
 const OrderPrefix = "[구매신청]"
 
 var (
-	ErrNotFound    = apperr.New("보상 페이지를 찾을 수 없습니다")
-	ErrAlreadyOpen = apperr.New("이미 열려 있는 보상 페이지가 있습니다. 먼저 닫아 주세요")
-	ErrNotDraft    = apperr.New("작성 중인 페이지만 열 수 있습니다")
-	ErrNotOpen     = apperr.New("열려 있는 페이지가 아닙니다")
-	ErrClosed      = apperr.New("이미 닫힌 페이지입니다. 다시 열 수 없습니다")
-	ErrNoItems     = apperr.New("보상을 하나 이상 등록해 주세요")
-	ErrBadPostURL  = apperr.New("방송국 게시글 주소가 올바르지 않습니다")
-	ErrPostOwner   = apperr.New("본인 방송국의 게시글만 등록할 수 있습니다")
+	ErrNotFound   = apperr.New("보상 페이지를 찾을 수 없습니다")
+	ErrNotDraft   = apperr.New("작성 중인 페이지만 열 수 있습니다")
+	ErrNotOpen    = apperr.New("열려 있는 페이지가 아닙니다")
+	ErrClosed     = apperr.New("이미 닫힌 페이지입니다. 다시 열 수 없습니다")
+	ErrNoItems    = apperr.New("보상을 하나 이상 등록해 주세요")
+	ErrBadPostURL = apperr.New("방송국 게시글 주소가 올바르지 않습니다")
+	ErrPostOwner  = apperr.New("본인 방송국의 게시글만 등록할 수 있습니다")
 )
 
 type Status string
@@ -48,6 +47,9 @@ const (
 	StatusDraft  Status = "draft"
 	StatusOpen   Status = "open"
 	StatusClosed Status = "closed"
+	// StatusCancelled는 시장을 취소하면서 확정 구매를 모두 환불한 상태다.
+	// 단순 종료와 구분해 스트리머와 시청자 모두 결과를 오해하지 않게 한다.
+	StatusCancelled Status = "cancelled"
 )
 
 type Page struct {
@@ -176,8 +178,9 @@ func Create(ctx context.Context, pool *store.DB, bid, title, desc string) (*Page
 	return Get(ctx, pool, bid, id)
 }
 
-// SetItems는 보상 목록을 통째로 교체한다.
-// 열린 페이지는 상품을 바꿀 수 없다 — 시청자가 본 목록과 정산 기준이 달라지면 안 된다.
+// SetItems는 작성 중인 페이지의 보상 목록을 통째로 교체한다.
+// 열린 시장은 가격을 포함한 기존 보상을 바꿀 수 없다 — 시청자가 본 조건과
+// 결제 조건이 달라지는 일을 막기 위해서다.
 func SetItems(ctx context.Context, pool *store.DB, bid string, pageID int64, items []Item) error {
 	p, err := Get(ctx, pool, bid, pageID)
 	if err != nil {
@@ -187,28 +190,8 @@ func SetItems(ctx context.Context, pool *store.DB, bid string, pageID int64, ite
 		return apperr.New("작성 중인 페이지만 보상을 수정할 수 있습니다")
 	}
 
-	seen := map[string]bool{}
-	for _, it := range items {
-		name := strings.TrimSpace(it.Name)
-		if name == "" {
-			return apperr.New("보상 이름을 입력해 주세요")
-		}
-		// 구매는 보상 ID를 기준으로 처리하므로, 예전 댓글 파서의 쉼표·수량 표기
-		// 제약을 더 이상 보상 이름에 강제하지 않는다.
-		if it.Price < 0 {
-			return apperr.New("가격은 0 이상이어야 합니다")
-		}
-		if it.Stock != nil && *it.Stock < 0 {
-			return apperr.New("총 수량은 0 이상이어야 합니다")
-		}
-		if it.PerUserLimit != nil && *it.PerUserLimit < 1 {
-			return apperr.New("인당 제한은 1 이상이어야 합니다")
-		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			return apperr.Newf("보상 이름이 중복됩니다: %q", name)
-		}
-		seen[key] = true
+	if err := validateItems(items, map[string]bool{}); err != nil {
+		return err
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -231,6 +214,94 @@ func SetItems(ctx context.Context, pool *store.DB, bid string, pageID int64, ite
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// AddItems는 열린 시장에 새 보상만 덧붙인다. 기존 행은 전혀 건드리지 않으므로
+// 이미 공개·구매된 보상의 이름·가격·제한은 바뀔 수 없다.
+func AddItems(ctx context.Context, pool *store.DB, bid string, pageID int64, items []Item) (*Page, error) {
+	if len(items) == 0 {
+		return nil, apperr.New("추가할 보상을 하나 이상 입력해 주세요")
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status Status
+	err = tx.QueryRow(ctx, `SELECT status FROM shop_pages WHERE id=$1 AND bid=$2 FOR UPDATE`, pageID, bid).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if status != StatusOpen {
+		return nil, apperr.New("열린 시장에서만 보상을 추가할 수 있습니다")
+	}
+
+	rows, err := tx.Query(ctx, `SELECT name FROM shop_items WHERE page_id=$1 FOR UPDATE`, pageID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		seen[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if err := validateItems(items, seen); err != nil {
+		return nil, err
+	}
+
+	var next int
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sort_order),-1)+1 FROM shop_items WHERE page_id=$1`, pageID).Scan(&next); err != nil {
+		return nil, err
+	}
+	for i, it := range items {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO shop_items (page_id,name,price,stock,per_user_limit,sort_order,image_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			pageID, strings.TrimSpace(it.Name), it.Price, it.Stock, it.PerUserLimit, next+i, it.ImageID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return Get(ctx, pool, bid, pageID)
+}
+
+func validateItems(items []Item, seen map[string]bool) error {
+	for _, it := range items {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			return apperr.New("보상 이름을 입력해 주세요")
+		}
+		if it.Price < 0 {
+			return apperr.New("가격은 0 이상이어야 합니다")
+		}
+		if it.Stock != nil && *it.Stock < 0 {
+			return apperr.New("총 수량은 0 이상이어야 합니다")
+		}
+		if it.PerUserLimit != nil && *it.PerUserLimit < 1 {
+			return apperr.New("인당 제한은 1 이상이어야 합니다")
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return apperr.Newf("보상 이름이 중복됩니다: %q", name)
+		}
+		seen[key] = true
+	}
+	return nil
 }
 
 func Delete(ctx context.Context, pool *store.DB, bid string, pageID int64) error {
@@ -286,9 +357,6 @@ func Open(ctx context.Context, pool *store.DB, bid string, pageID int64, postURL
 		 WHERE id = $1 AND bid = $2 AND status = 'draft'`,
 		pageID, bid, postURL, titleNo)
 	if err != nil {
-		if strings.Contains(err.Error(), "shop_pages_one_open_per_bid") {
-			return nil, ErrAlreadyOpen
-		}
 		if strings.Contains(err.Error(), "shop_pages_post_uniq") {
 			return nil, apperr.New("이미 다른 보상 페이지에 연결된 게시글입니다")
 		}
@@ -320,8 +388,8 @@ func OpenPageByPost(ctx context.Context, pool *store.DB, titleNo int64) (*Page, 
 //
 // 시청자 확장이 "이 글이 시장인가"를 판단하는 데 쓴다. 예전에는 게시글 제목이
 // "[달란트 시장]"으로 시작하는지 보았지만, 그러려면 글을 열 때마다 SOOP API를
-// 먼저 불러야 했다. 방송국당 열린 페이지는 하나뿐이므로(shop_pages_one_open_per_bid)
-// 이 목록을 한 번 받아 캐시해 두면 이후 판단은 요청 없이 끝난다.
+// 먼저 불러야 했다. 열린 페이지들의 글 번호를 한 번 받아 캐시해 두면 이후 판단은
+// 요청 없이 끝난다. 하나의 방송국에서 여러 시장을 동시에 열 수 있다.
 //
 // 게시글 번호는 이미 공개된 정보라 인증 없이 준다. 보상 목록이나 잔액은 포함하지 않는다.
 func OpenPostNos(ctx context.Context, pool *store.DB, bid string) ([]int64, error) {

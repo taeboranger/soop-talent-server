@@ -106,6 +106,13 @@ func (t *Tx) QueryRow(ctx context.Context, q string, args ...any) *Row {
 	}
 	return &Row{row: t.Tx.QueryRowContext(ctx, q, args...)}
 }
+func (t *Tx) Query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	q, args, err := mysqlQuery(q, args)
+	if err != nil {
+		return nil, err
+	}
+	return t.Tx.QueryContext(ctx, q, args...)
+}
 func (t *Tx) Commit(context.Context) error   { return t.Tx.Commit() }
 func (t *Tx) Rollback(context.Context) error { return t.Tx.Rollback() }
 

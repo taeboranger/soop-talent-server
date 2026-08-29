@@ -23,7 +23,10 @@ type Order struct {
 	Status       string     `json:"status"`
 	RejectReason string     `json:"rejectReason,omitempty"`
 	CommentedAt  *time.Time `json:"commentedAt,omitempty"`
-	Lines        []Line     `json:"lines,omitempty"`
+	// OrderedAt은 웹 시장에서 실제 결제가 확정된 시각이다. 과거 댓글형 주문도
+	// settled_at을 저장하므로 같은 필드로 최신 구매 순서를 안정적으로 보여 준다.
+	OrderedAt time.Time `json:"orderedAt"`
+	Lines     []Line    `json:"lines,omitempty"`
 }
 
 type Line struct {
@@ -380,9 +383,9 @@ func currentBalance(ctx context.Context, pool *store.DB, bid, userID string) (in
 func Orders(ctx context.Context, pool *store.DB, pageID int64) ([]Order, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, user_id, COALESCE(nickname,''), COALESCE(comment_no,0), COALESCE(raw_comment,''),
-		       total_price, status, COALESCE(reject_reason,''), commented_at
+		       total_price, status, COALESCE(reject_reason,''), commented_at, settled_at
 		  FROM purchase_orders WHERE page_id = $1
-		 ORDER BY commented_at IS NULL, commented_at, comment_no`, pageID)
+		 ORDER BY settled_at DESC, id DESC`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +396,7 @@ func Orders(ctx context.Context, pool *store.DB, pageID int64) ([]Order, error) 
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment,
-			&o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt); err != nil {
+			&o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt, &o.OrderedAt); err != nil {
 			return nil, err
 		}
 		index[o.ID] = len(orders)

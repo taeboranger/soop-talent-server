@@ -236,13 +236,24 @@
       <h3>SOOP으로 로그인합니다</h3>
       <p>
         이 사이트에서 <strong>SOOP</strong> 로그인 버튼을 누르고 방송 여부·방송국 정보·채팅 권한을 허용합니다.
-        서버가 공식 정보로 방송국을 바로 확인하므로 별도 아이디 입력이나 관리자 승인이 필요 없습니다.
+        로그인한 모든 사람은 우선 시청자로 시작하며, 방송국 아이디와 닉네임은 공식 API로 확인됩니다.
       </p>
     </div>
   </div>
 
   <div class="step">
     <div class="step-num">2</div>
+    <div>
+      <h3>스트리머 승인 신청을 보냅니다</h3>
+      <p>
+        메인 화면의 <strong>스트리머 승인 신청</strong>을 누르세요. 관리자가 승인해야 방송 추적·채팅 SDK·달란트 기준·시장 관리 기능이 활성화됩니다.
+        Discord <a href="https://discord.com/users/cagea1" target="_blank" rel="noopener noreferrer"><strong>@cagea1</strong>에게 DM</a>을 보내 주시면 더 빠르게 확인할 수 있습니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
     <div>
       <h3>확장 프로그램을 설치합니다</h3>
       <p>
@@ -253,7 +264,7 @@
   </div>
 
   <div class="step">
-    <div class="step-num">3</div>
+    <div class="step-num">4</div>
     <div>
       <h3>확장에서도 SOOP으로 로그인합니다</h3>
       <p>
@@ -264,7 +275,7 @@
   </div>
 
   <div class="step">
-    <div class="step-num">4</div>
+    <div class="step-num">5</div>
     <div>
       <h3>연결 상태를 확인합니다</h3>
       <p>
@@ -470,7 +481,7 @@
           <text class="sub" x="574" y="88">2</text>
           <text class="sub" x="652" y="88" style="fill:var(--bad)">삭제</text>
         </svg>
-        <figcaption>여러 페이지를 만들 수 있지만 <strong>동시에 열 수 있는 건 하나</strong>입니다.</figcaption>
+        <figcaption>여러 페이지를 <strong>동시에 열어</strong> 각자의 공유 링크로 운영할 수 있습니다.</figcaption>
       </figure>
     </div>
   </div>
@@ -478,10 +489,10 @@
   <div class="step">
     <div class="step-num">2</div>
     <div>
-      <h3>공유 링크를 만들고 시청자에게 보냅니다</h3>
+      <h3>공유 링크를 방송국 게시글로 알립니다</h3>
       <p>
         <strong>페이지 열기</strong>를 누르면 추측하기 어려운 시장 링크가 만들어집니다.
-        게시글 주소를 등록할 필요 없이 이 링크를 시청자에게 직접 공유하면 됩니다.
+        이 링크를 복사해 방송국 게시글에 붙여 넣고 시청자에게 알려주세요.
       </p>
       <p>
         시장은 목록이나 검색에서 공개하지 않습니다. 링크를 아는 사람만 접근할 수 있는
@@ -506,14 +517,19 @@
     <div>
       <h3>시장 종료와 구매 내역</h3>
       <p>
-        구매 내역은 결제될 때마다 바로 쌓입니다. <strong>시장 닫기</strong>를 누르면 링크는 즉시 종료되며,
-        이미 열어 둔 화면에서도 더 이상 구매할 수 없습니다.
+        구매 내역은 결제될 때마다 바로 쌓이고, 열린 시장 화면에서 5초마다 갱신됩니다.
+        열린 뒤에도 새 보상은 추가할 수 있지만, 기존 보상의 가격·수량·인당 제한은 결제 조건 보호를 위해 바꿀 수 없습니다.
+        <strong>시장 닫기</strong>를 누르면 링크는 즉시 종료되며, 이미 열어 둔 화면에서도 더 이상 구매할 수 없습니다.
       </p>
+	  <p>
+	    실수로 연 시장은 <strong>시장 취소 · 전액 환불</strong>로 끝낼 수 있습니다. 확정된 모든 주문은 취소 상태로 남고,
+	    사용된 달란트는 각 시청자에게 한 번에 전액 환불됩니다. 필요하면 같은 링크로 다시 열어 새 시장처럼 운영할 수 있습니다.
+	  </p>
     </div>
   </div>
 
   <div class="callout warn">
-    <strong>한 번 닫으면 다시 열 수 없습니다.</strong>
+    <strong>시장을 닫아도 다시 열 수 있습니다.</strong> 기존 구매 내역과 재고·인당 제한은 유지되며, 같은 공유 링크를 계속 사용합니다.
     닫힌 링크는 <strong>410 Gone</strong>으로 응답해 “이 달란트 시장은 종료되었습니다”만 보여 줍니다.
     달란트·총 수량·인당 제한 중 하나라도 모자라면 차감은 일어나지 않습니다.
   </div>

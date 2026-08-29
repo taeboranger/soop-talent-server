@@ -18,9 +18,12 @@ func (s *Server) shopRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/shop/pages", s.approved(s.handleShopList))
 	mux.Handle("POST /api/shop/pages", s.approved(s.handleShopCreate))
 	mux.Handle("PUT /api/shop/pages/{id}/items", s.approved(s.handleShopSetItems))
+	mux.Handle("POST /api/shop/pages/{id}/items", s.approved(s.handleShopAddItems))
 	mux.Handle("POST /api/shop/pages/{id}/open", s.approved(s.handleShopOpen))
 	mux.Handle("POST /api/shop/pages/{id}/close", s.approved(s.handleShopClose))
+	mux.Handle("POST /api/shop/pages/{id}/cancel", s.approved(s.handleShopCancel))
 	mux.Handle("GET /api/shop/pages/{id}/orders", s.approved(s.handleShopOrders))
+	mux.Handle("GET /api/shop/pages/{id}/orders.xlsx", s.approved(s.handleShopOrdersXLSX))
 	mux.Handle("POST /api/shop/pages/{id}/delete", s.approved(s.handleShopDelete))
 
 	// 달란트 로그 · 수동 지급
@@ -138,6 +141,27 @@ func (s *Server) handleShopSetItems(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 
+// handleShopAddItems는 열린 시장에 새 보상만 덧붙인다. 기존 보상·가격은
+// 이 경로로 전혀 수정할 수 없다.
+func (s *Server) handleShopAddItems(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Items []shop.Item `json:"items"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		return err
+	}
+	p, err := shop.AddItems(r.Context(), s.Store.Pool, bidOf(r), id, req.Items)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, p)
+	return nil
+}
+
 // handleShopOpen은 게시글 연결 없이, 추측 불가능한 공유 링크를 만들어 페이지를 연다.
 func (s *Server) handleShopOpen(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r)
@@ -171,6 +195,23 @@ func (s *Server) handleShopClose(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// handleShopCancel은 열린 시장을 취소하고, 확정된 구매 금액을 모두 돌려준다.
+// 환불·주문 상태 변경·시장 폐쇄는 shop.CancelWeb의 한 트랜잭션으로 묶인다.
+func (s *Server) handleShopCancel(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	result, err := shop.CancelWeb(r.Context(), s.Store.Pool, bidOf(r), id)
+	if err != nil {
+		return err
+	}
+	s.Log.Info("공유 링크 시장 취소·환불", "bid", bidOf(r), "page", id,
+		"orders", result.RefundedOrders, "talents", result.RefundedTalents)
+	writeJSON(w, http.StatusOK, result)
+	return nil
+}
+
 func (s *Server) handleShopOrders(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r)
 	if err != nil {
@@ -185,6 +226,33 @@ func (s *Server) handleShopOrders(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	writeJSON(w, http.StatusOK, orders)
+	return nil
+}
+
+// handleShopOrdersXLSX는 스트리머 본인 시장의 구매 내역만 .xlsx로 내보낸다.
+// 브라우저 토큰은 URL에 넣지 않고 Authorization 헤더로만 전달된다.
+func (s *Server) handleShopOrdersXLSX(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	page, err := shop.Get(r.Context(), s.Store.Pool, bidOf(r), id)
+	if err != nil {
+		return err
+	}
+	orders, err := shop.Orders(r.Context(), s.Store.Pool, id)
+	if err != nil {
+		return err
+	}
+	file, err := shop.OrdersXLSX(page, orders)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", shop.XLSXContentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="sooptalent-market-%d-orders.xlsx"`, id))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(file)
 	return nil
 }
 

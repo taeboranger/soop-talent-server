@@ -25,17 +25,18 @@ type Event struct {
 
 // 적립 종류
 const (
-	KindRankWatch    = "rank_watch"
-	KindRankChat     = "rank_chat"
-	KindStay         = "stay"
-	KindChat         = "chat"
-	KindSubscribe    = "subscribe"
-	KindFanclub      = "fanclub"
-	KindDonation     = "donation"
-	KindBoardPost    = "board_post"
-	KindBoardComment = "board_comment"
-	KindManual       = "manual"   // 스트리머가 직접 지급/차감
-	KindPurchase     = "purchase" // 달란트 시장 구매 차감
+	KindRankWatch      = "rank_watch"
+	KindRankChat       = "rank_chat"
+	KindStay           = "stay"
+	KindChat           = "chat"
+	KindSubscribe      = "subscribe"
+	KindFanclub        = "fanclub"
+	KindDonation       = "donation"
+	KindBoardPost      = "board_post"
+	KindBoardComment   = "board_comment"
+	KindManual         = "manual"          // 스트리머가 직접 지급/차감
+	KindPurchase       = "purchase"        // 달란트 시장 구매 차감
+	KindPurchaseRefund = "purchase_refund" // 시장 취소에 따른 구매 환불
 )
 
 // KindLabel은 로그 화면에 보여줄 한국어 사유다.
@@ -64,6 +65,8 @@ func KindLabel(kind string) string {
 		return "직접 지급"
 	case KindPurchase:
 		return "보상 교환"
+	case KindPurchaseRefund:
+		return "시장 취소 환불"
 	}
 	return kind
 }
