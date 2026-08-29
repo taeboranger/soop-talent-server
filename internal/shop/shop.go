@@ -56,6 +56,7 @@ type Page struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description,omitempty"`
 	Status      Status     `json:"status"`
+	PublicToken string     `json:"publicToken,omitempty"`
 	PostURL     string     `json:"postUrl,omitempty"`
 	PostTitleNo *int64     `json:"postTitleNo,omitempty"`
 	OpenedAt    *time.Time `json:"openedAt,omitempty"`
@@ -87,7 +88,7 @@ type Item struct {
 
 func List(ctx context.Context, pool *store.DB, bid string) ([]Page, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
+		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(public_token,''), COALESCE(post_url,''),
 		       post_title_no, opened_at, closed_at, settled_at, created_at
 		  FROM shop_pages WHERE bid = $1 ORDER BY created_at DESC`, bid)
 	if err != nil {
@@ -98,7 +99,7 @@ func List(ctx context.Context, pool *store.DB, bid string) ([]Page, error) {
 	var out []Page
 	for rows.Next() {
 		var p Page
-		if err := rows.Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status,
+		if err := rows.Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PublicToken,
 			&p.PostURL, &p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt,
 			&p.CreatedAt); err != nil {
 			return nil, err
@@ -123,10 +124,10 @@ func List(ctx context.Context, pool *store.DB, bid string) ([]Page, error) {
 func Get(ctx context.Context, pool *store.DB, bid string, id int64) (*Page, error) {
 	var p Page
 	err := pool.QueryRow(ctx, `
-		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
+		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(public_token,''), COALESCE(post_url,''),
 		       post_title_no, opened_at, closed_at, settled_at, created_at
 		  FROM shop_pages WHERE id = $1 AND bid = $2`, id, bid).
-		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PostURL,
+		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PublicToken, &p.PostURL,
 			&p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -192,13 +193,8 @@ func SetItems(ctx context.Context, pool *store.DB, bid string, pageID int64, ite
 		if name == "" {
 			return apperr.New("보상 이름을 입력해 주세요")
 		}
-		// 댓글에서 이름으로 상품을 찾으므로, 구분자가 이름에 들어가면 파싱이 깨진다.
-		if strings.ContainsAny(name, ",\n\r") {
-			return apperr.Newf("보상 이름에 쉼표나 줄바꿈을 넣을 수 없습니다: %q", name)
-		}
-		if xQuantity.MatchString(name) {
-			return apperr.Newf("보상 이름이 수량 표기와 겹칩니다: %q", name)
-		}
+		// 구매는 보상 ID를 기준으로 처리하므로, 예전 댓글 파서의 쉼표·수량 표기
+		// 제약을 더 이상 보상 이름에 강제하지 않는다.
 		if it.Price < 0 {
 			return apperr.New("가격은 0 이상이어야 합니다")
 		}
@@ -305,10 +301,10 @@ func Open(ctx context.Context, pool *store.DB, bid string, pageID int64, postURL
 func OpenPageByPost(ctx context.Context, pool *store.DB, titleNo int64) (*Page, error) {
 	var p Page
 	err := pool.QueryRow(ctx, `
-		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(post_url,''),
+		SELECT id, bid, title, COALESCE(description,''), status, COALESCE(public_token,''), COALESCE(post_url,''),
 		       post_title_no, opened_at, closed_at, settled_at, created_at
 		  FROM shop_pages WHERE post_title_no = $1 AND status = 'open'`, titleNo).
-		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PostURL,
+		Scan(&p.ID, &p.BID, &p.Title, &p.Description, &p.Status, &p.PublicToken, &p.PostURL,
 			&p.PostTitleNo, &p.OpenedAt, &p.ClosedAt, &p.SettledAt, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

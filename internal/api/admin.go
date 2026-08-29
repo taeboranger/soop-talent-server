@@ -19,6 +19,9 @@ var adminHTML []byte
 //go:embed dashboard.html
 var dashboardHTML []byte
 
+//go:embed market.html
+var marketHTML []byte
+
 // 사용 가이드. 스트리머용 기본 안내와, 규칙·원리를 담은 자세한 안내로 나뉜다.
 //
 //go:embed guide.html
@@ -37,6 +40,17 @@ var privacyHTML []byte
 var faviconSVG []byte
 
 func (s *Server) adminPage() http.Handler { return pageHandler(adminHTML) }
+
+func (s *Server) marketPage() http.Handler {
+	inner := pageHandler(marketHTML)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.PathValue("token")) == "" {
+			s.writeError(w, r, httpError{http.StatusNotFound, "시장 링크가 올바르지 않습니다."})
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+}
 
 func (s *Server) guidePage() http.Handler       { return pageHandler(guideHTML) }
 func (s *Server) guideDetailPage() http.Handler { return pageHandler(guideDetailHTML) }

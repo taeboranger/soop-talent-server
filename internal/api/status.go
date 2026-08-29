@@ -237,7 +237,7 @@ func (s *Server) chatStatus(bid string) chatJSON {
 
 	case !st.Enabled:
 		out.Phase, out.Tone, out.Label = "off", toneOff, "꺼짐"
-		out.Detail = "채팅 연동을 꺼 두었습니다. 시청·채팅·후원 달란트가 쌓이지 않습니다."
+		out.Detail = "채팅 연동을 꺼 두었습니다. 시청·채팅·후원·첫 후원 팬클럽·구독 달란트가 쌓이지 않습니다."
 		return out
 
 	case !st.Running:

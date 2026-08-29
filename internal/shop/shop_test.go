@@ -1,6 +1,9 @@
 package shop
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // 댓글 파싱은 달란트 차감의 근거다. 잘못 읽으면 남의 달란트가 사라진다.
 func TestParseComment(t *testing.T) {
@@ -42,9 +45,9 @@ func TestParseComment(t *testing.T) {
 func TestParseComment_무시(t *testing.T) {
 	for _, s := range []string{
 		"안녕하세요",
-		"구매신청 사과",          // 대괄호 없음
-		"저도 [구매신청] 할게요",   // 접두사가 앞에 있어야 한다
-		"[구매신청]",            // 항목 없음
+		"구매신청 사과",       // 대괄호 없음
+		"저도 [구매신청] 할게요", // 접두사가 앞에 있어야 한다
+		"[구매신청]",        // 항목 없음
 		"[구매신청]   ",
 		"",
 	} {
@@ -97,5 +100,38 @@ func TestNormalizeName(t *testing.T) {
 	}
 	if normalizeName("사과") == normalizeName("사과주스") {
 		t.Error("다른 상품이 같게 인식됨")
+	}
+}
+
+func TestNewPublicToken_추측불가공유링크형식(t *testing.T) {
+	a, err := newPublicToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newPublicToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) != 43 || a == b || strings.ContainsAny(a, "+/=") {
+		t.Fatalf("공유 토큰 형식이 올바르지 않음: %q", a)
+	}
+}
+
+func TestCheckout_요청형식은DB보다먼저검사한다(t *testing.T) {
+	// DB가 없어도 잘못된 사용자·멱등키·수량이 결제 경로로 들어가지 않는지 고정한다.
+	for _, tc := range []struct {
+		name, user, key string
+		lines           []CheckoutLine
+	}{
+		{"잘못된 사용자", "-1", strings.Repeat("a", 24), []CheckoutLine{{ItemID: 1, Quantity: 1}}},
+		{"짧은 요청키", "viewer", "short", []CheckoutLine{{ItemID: 1, Quantity: 1}}},
+		{"빈 장바구니", "viewer", strings.Repeat("a", 24), nil},
+		{"잘못된 수량", "viewer", strings.Repeat("a", 24), []CheckoutLine{{ItemID: 1, Quantity: 0}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Checkout(t.Context(), nil, "token", tc.user, "닉", tc.key, tc.lines); err == nil {
+				t.Fatal("잘못된 결제 요청이 DB 접근 전 거부되지 않음")
+			}
+		})
 	}
 }

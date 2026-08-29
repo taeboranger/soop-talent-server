@@ -379,7 +379,7 @@ func currentBalance(ctx context.Context, pool *store.DB, bid, userID string) (in
 // Orders는 한 페이지의 구매 내역이다. 스트리머가 조회한다.
 func Orders(ctx context.Context, pool *store.DB, pageID int64) ([]Order, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, user_id, COALESCE(nickname,''), comment_no, raw_comment,
+		SELECT id, user_id, COALESCE(nickname,''), COALESCE(comment_no,0), COALESCE(raw_comment,''),
 		       total_price, status, COALESCE(reject_reason,''), commented_at
 		  FROM purchase_orders WHERE page_id = $1
 		 ORDER BY commented_at IS NULL, commented_at, comment_no`, pageID)

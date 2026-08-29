@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,10 +32,10 @@ func (s *Server) shopRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/shop/images", s.approved(s.handleImageUpload))
 	mux.Handle("GET /api/shop/images/{id}", s.h(s.handleImageGet))
 
-	// 시청자 확장용 — 로그인 없이 호출된다.
-	// 열려 있는 페이지의 보상 목록과 본인 잔액만 알려주므로 민감한 정보가 아니다.
-	mux.Handle("GET /api/viewer/shop", s.h(s.handleViewerShop))
-	mux.Handle("GET /api/viewer/markets", s.h(s.handleViewerMarkets))
+	// 공유 링크로 들어온 로그인 시청자용 시장. 스트리머 권한은 요구하지 않는다.
+	mux.Handle("GET /api/market/{token}/state", s.h(s.handleMarketState))
+	mux.Handle("GET /api/market/{token}", s.session(s.handleMarketGet))
+	mux.Handle("POST /api/market/{token}/orders", s.session(s.handleMarketOrder))
 }
 
 // handleImageUpload는 보상 미리보기를 받는다.
@@ -137,61 +138,23 @@ func (s *Server) handleShopSetItems(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 
-// handleShopOpen은 게시글을 연결하고 페이지를 연다.
-// 게시글이 정말 본인 것인지 **서버가 SOOP에 직접 물어** 확인한다.
-// 제목은 자유다 — 소유자 확인이 진짜 방어선이고, 제목 검사는 오타로 막히기만 했다.
+// handleShopOpen은 게시글 연결 없이, 추측 불가능한 공유 링크를 만들어 페이지를 연다.
 func (s *Server) handleShopOpen(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r)
 	if err != nil {
 		return err
 	}
-	var req struct {
-		PostURL string `json:"postUrl"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-
 	bid := bidOf(r)
-
-	// 상태를 먼저 본다. 이미 닫힌 페이지라면 SOOP에 물어볼 필요가 없고,
-	// "제목이 키워드로 시작해야 합니다" 같은 엉뚱한 안내가 나가지도 않는다.
-	if page, err := shop.Get(r.Context(), s.Store.Pool, bid, id); err != nil {
-		return err
-	} else if page.Status != shop.StatusDraft {
-		if page.Status == shop.StatusClosed {
-			return httpError{http.StatusConflict, shop.ErrClosed.Error()}
-		}
-		return httpError{http.StatusConflict, shop.ErrNotDraft.Error()}
-	}
-
-	postBID, titleNo, err := shop.ParsePostURL(req.PostURL)
-	if err != nil {
-		return httpError{http.StatusBadRequest, err.Error()}
-	}
-	if !strings.EqualFold(postBID, bid) {
-		return httpError{http.StatusForbidden, shop.ErrPostOwner.Error()}
-	}
-
-	post, err := s.SoopAPI.Post(r.Context(), bid, titleNo)
-	if err != nil {
-		return httpError{http.StatusBadRequest, "게시글을 확인하지 못했습니다. 주소를 다시 확인해 주세요."}
-	}
-	if !strings.EqualFold(soop.NormalizeUserID(post.UserID), bid) {
-		return httpError{http.StatusForbidden, shop.ErrPostOwner.Error()}
-	}
-
-	p, err := shop.Open(r.Context(), s.Store.Pool, bid, id, strings.TrimSpace(req.PostURL), titleNo)
+	p, err := shop.OpenWeb(r.Context(), s.Store.Pool, bid, id)
 	if err != nil {
 		return err
 	}
-	s.Log.Info("상품 페이지 열림", "bid", bid, "page", p.ID, "post", titleNo)
+	s.Log.Info("공유 링크 시장 열림", "bid", bid, "page", p.ID)
 	writeJSON(w, http.StatusOK, p)
 	return nil
 }
 
-// handleShopClose는 페이지를 닫고 곧바로 정산한다.
-// 닫힌 페이지는 다시 열 수 없다.
+// handleShopClose는 즉시 시장을 닫는다. 댓글 정산은 더 이상 하지 않는다.
 func (s *Server) handleShopClose(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r)
 	if err != nil {
@@ -203,23 +166,8 @@ func (s *Server) handleShopClose(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := shop.Settle(r.Context(), s.Store.Pool, s.SoopAPI, p)
-	if err != nil {
-		// 페이지는 이미 닫혔다. 정산은 다시 시도할 수 있도록 오류만 알린다.
-		s.Log.Error("정산 실패", "bid", bid, "page", id, "err", err)
-		return httpError{http.StatusBadGateway,
-			"페이지는 닫혔지만 댓글 정산에 실패했습니다. 잠시 후 다시 시도해 주세요."}
-	}
-	s.Log.Info("상품 페이지 정산", "bid", bid, "page", id,
-		"주문", result.Orders, "확정", result.Fulfilled, "거절", result.Rejected)
-
-	orders, err := shop.Orders(r.Context(), s.Store.Pool, id)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"page": p, "result": result, "orders": orders,
-	})
+	s.Log.Info("공유 링크 시장 닫힘", "bid", bid, "page", id)
+	writeJSON(w, http.StatusOK, p)
 	return nil
 }
 
@@ -403,5 +351,65 @@ func (s *Server) handleViewerShop(w http.ResponseWriter, r *http.Request) error 
 		"userId":      userID,
 		"prefix":      shop.OrderPrefix,
 	})
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// 공유 링크 시장
+// ---------------------------------------------------------------------------
+
+// handleMarketState는 로그인 전에 링크가 닫혔는지만 알린다. 닫힌 시장은
+// 로그인 화면을 거치게 하지 않고 곧바로 종료 안내를 보여 줘야 한다.
+func (s *Server) handleMarketState(w http.ResponseWriter, r *http.Request) error {
+	p, err := shop.PublicPage(r.Context(), s.Store.Pool, r.PathValue("token"))
+	if errors.Is(err, shop.ErrMarketClosed) {
+		return httpError{http.StatusGone, err.Error()}
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": p.Status})
+	return nil
+}
+
+func (s *Server) handleMarketGet(w http.ResponseWriter, r *http.Request) error {
+	p, err := shop.PublicPage(r.Context(), s.Store.Pool, r.PathValue("token"))
+	if errors.Is(err, shop.ErrMarketClosed) {
+		return httpError{http.StatusGone, err.Error()}
+	}
+	if err != nil {
+		return err
+	}
+	acct := accountOf(r)
+	balance, err := shop.Balance(r.Context(), s.Store.Pool, p.BID, acct.SoopID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"page":    p,
+		"balance": balance,
+		"viewer":  map[string]string{"id": acct.SoopID, "nickname": acct.Nickname},
+	})
+	return nil
+}
+
+func (s *Server) handleMarketOrder(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		RequestKey string              `json:"requestKey"`
+		Lines      []shop.CheckoutLine `json:"lines"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		return err
+	}
+	acct := accountOf(r)
+	result, err := shop.Checkout(r.Context(), s.Store.Pool, r.PathValue("token"),
+		acct.SoopID, acct.Nickname, req.RequestKey, req.Lines)
+	if errors.Is(err, shop.ErrMarketClosed) {
+		return httpError{http.StatusGone, err.Error()}
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, result)
 	return nil
 }

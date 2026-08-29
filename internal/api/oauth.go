@@ -154,13 +154,19 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) err
 			s.Log.Error("SOOP OAuth 토큰 저장 실패", "account", acct.ID, "bid", info.ID, "err", err)
 			return bounce(w, r, redirectURI, url.Values{"error": {"SOOP 연동 정보를 안전하게 저장하지 못했습니다. 운영자에게 문의해 주세요."}})
 		}
-		if official, ok := s.Streamer.(OfficialChatHook); ok {
-			official.PromoteOfficial(context.WithoutCancel(r.Context()), info.ID)
-		}
-		if err := s.Store.EnsureStreamer(r.Context(), info.ID, info.Nickname); err != nil {
-			s.Log.Warn("SOOP OAuth 스트리머 등록 실패", "bid", info.ID, "err", err)
-		} else if s.Streamer != nil {
-			s.Streamer.Add(context.WithoutCancel(r.Context()), info.ID)
+		// 시청자는 토큰을 보관해 두되, 로그인만으로 방송국 수집이나 시장 관리
+		// 권한을 얻지는 않는다. 이미 활성화한 스트리머만 즉시 수집을 재개한다.
+		if bid, claimErr := auth.ApprovedBID(r.Context(), s.Store.Pool, acct.ID); claimErr == nil {
+			if official, ok := s.Streamer.(OfficialChatHook); ok {
+				official.PromoteOfficial(context.WithoutCancel(r.Context()), bid)
+			}
+			if err := s.Store.EnsureStreamer(r.Context(), bid, info.Nickname); err != nil {
+				s.Log.Warn("SOOP OAuth 스트리머 등록 실패", "bid", bid, "err", err)
+			} else if s.Streamer != nil {
+				s.Streamer.Add(context.WithoutCancel(r.Context()), bid)
+			}
+		} else if !errors.Is(claimErr, auth.ErrNoApprovedBid) {
+			return bounce(w, r, redirectURI, url.Values{"error": {"스트리머 연결 상태를 확인하지 못했습니다."}})
 		}
 	}
 

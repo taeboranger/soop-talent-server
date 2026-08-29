@@ -241,15 +241,16 @@
     </div>
   </section>
 
-  <!-- ── 연결 신청 안내 ─────────────────────────────────────────────── -->
+  <!-- ── 시청자 / 스트리머 전환 안내 ────────────────────────────────── -->
   <section id="claimView" hidden>
     <div class="card stack">
-      <h2>스트리머 연결이 필요합니다</h2>
+      <h2>SOOP 로그인 완료</h2>
       <div id="claimStatus"></div>
       <p class="muted small" style="margin:0">
-        SOOP 로그인으로 방송국을 자동 연결할 수 있습니다. 로그인한 계정의 방송국이 확인되면
-        이 화면에서 달란트 기준과 달란트 시장을 관리할 수 있습니다.
+        시청자는 스트리머가 공유한 달란트 시장 링크에서 보상을 구매할 수 있습니다.
+        내 방송의 달란트를 운영하려면 아래에서 스트리머 기능을 활성화하세요.
       </p>
+      <button class="primary" id="activateStreamer">내 방송국 관리 시작</button>
     </div>
   </section>
 
@@ -648,8 +649,8 @@ async function loadConn({ announce = false } = {}) {
 async function setChat(on) {
   if (!on && !confirm(
       "채팅 연동을 끕니다.\n\n" +
-      "시청 체류·채팅·후원·구독 달란트가 더 이상 쌓이지 않습니다.\n" +
-      "랭킹 동기화와 게시판 직접 지급은 그대로 동작합니다.\n\n계속할까요?")) {
+      "시청 체류·채팅·별풍선/애드벌룬 후원·첫 후원 팬클럽·구독 달란트가 더 이상 쌓이지 않습니다.\n" +
+      "별별랭킹 동기화·게시판 직접 지급·달란트 시장은 그대로 동작합니다.\n\n계속할까요?")) {
     return;
   }
   try {
@@ -924,10 +925,6 @@ function draftBody(p) {
   (p.items ?? []).forEach((it) => items.append(itemRow(it)));
   if (!(p.items ?? []).length) items.append(itemRow());
 
-  const postUrl = el("input", {
-    type: "url", placeholder: "https://www.sooplive.com/station/아이디/post/글번호",
-  });
-
   const readItems = () => [...items.querySelectorAll(".item-row")].map((r) => {
     const g = (f) => r.querySelector(`[data-f=${f}]`).value.trim();
     const stock = g("stock");
@@ -963,14 +960,6 @@ function draftBody(p) {
         el("button", { class: "sm", text: "+ 보상 추가", onclick: () => items.append(itemRow()) }),
         el("button", { class: "sm primary", text: "보상 저장", onclick: save }))),
 
-    el("div", { class: "field" },
-      el("span", { class: "label", text: "게시글 주소" }),
-      postUrl,
-      el("span", { class: "hint" },
-        document.createTextNode("자기 방송국에 글을 쓰고 그 주소를 넣어 주세요. 제목은 자유지만, "),
-        el("code", { text: "[달란트 시장]" }),
-        document.createTextNode(" 같은 말머리를 붙이면 시청자가 목록에서 찾기 쉽습니다."))),
-
     el("div", { class: "row" },
       el("button", {
         class: "primary", text: "페이지 열기",
@@ -980,10 +969,10 @@ function draftBody(p) {
             await api(`/api/shop/pages/${p.id}/items`, {
               method: "PUT", body: JSON.stringify({ items: readItems() }),
             });
-            await api(`/api/shop/pages/${p.id}/open`, {
-              method: "POST", body: JSON.stringify({ postUrl: postUrl.value.trim() }),
-            });
-            msg("ok", "페이지를 열었습니다. 이제 시청자가 댓글로 구매를 신청할 수 있습니다.");
+            const opened = await api(`/api/shop/pages/${p.id}/open`, { method: "POST" });
+            const link = `${location.origin}/market/${opened.publicToken}`;
+            msg("ok", `페이지를 열었습니다. 공유 링크를 시청자에게 보내 주세요: ${link}`);
+            navigator.clipboard?.writeText(link).catch(() => {});
             loadPages();
           } catch (err) { msg("bad", err.message); e.target.disabled = false; }
         },
@@ -1002,22 +991,26 @@ function draftBody(p) {
 }
 
 function openBody(p) {
+  const link = `${location.origin}/market/${p.publicToken}`;
   return el("div", { class: "stack" },
     itemTable(p.items),
-    el("p", { class: "small muted", style: "margin:0" },
-      el("a", { href: p.postUrl, target: "_blank", rel: "noopener noreferrer", text: "연결된 게시글 보기 →" })),
+    el("div", { class: "notice", style: "margin:0" },
+      el("b", { text: "공유 링크" }), el("br"),
+      el("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: link }),
+      el("button", { class: "sm", style: "margin-left:8px", text: "복사", onclick: () => {
+        navigator.clipboard?.writeText(link).then(() => msg("ok", "시장 링크를 복사했습니다.")).catch(() => msg("warn", "링크를 직접 복사해 주세요."));
+      }})),
     el("div", { class: "notice warn", style: "margin:0" },
-      "페이지를 닫으면 댓글을 읽어 달란트를 차감합니다. 한 번 닫으면 다시 열 수 없습니다."),
+      "시청자는 이 링크에서 로그인 후 바로 구매합니다. 페이지를 닫으면 링크로 더 이상 접근하거나 구매할 수 없으며, 다시 열 수 없습니다."),
     el("div", { class: "row" },
       el("button", {
-        class: "primary", text: "닫고 정산하기",
+        class: "primary", text: "시장 닫기",
         onclick: async (e) => {
-          if (!confirm("페이지를 닫고 구매를 확정합니다. 다시 열 수 없습니다. 계속할까요?")) return;
+          if (!confirm("시장을 닫으면 시청자가 더 이상 접속하거나 구매할 수 없습니다. 다시 열 수 없습니다. 계속할까요?")) return;
           e.target.disabled = true;
           try {
-            const r = await api(`/api/shop/pages/${p.id}/close`, { method: "POST" });
-            msg("ok", `정산 완료 — 신청 ${r.result.orders}건 중 ${r.result.fulfilled}건 확정, ` +
-                      `${r.result.rejected}건 거절, 총 ${fmtNum(r.result.spent)} 달란트 차감`);
+            await api(`/api/shop/pages/${p.id}/close`, { method: "POST" });
+            msg("ok", "시장을 닫았습니다. 공유 링크에서는 종료 안내가 표시됩니다.");
             loadPages();
           } catch (err) { msg("bad", err.message); e.target.disabled = false; }
         },
@@ -1151,20 +1144,15 @@ async function start() {
   $("whoami").hidden = false;
 
   if (!me.approvedBid) {
-    // 승인 전에는 볼 연결 상태가 없다 — 연결 신청부터가 순서다.
+    // 시청자는 시장 링크에서만 구매하며, 방송국 관리는 명시적으로 활성화한 뒤에만 연다.
     stopConnPolling();
     $("mainView").hidden = true;
     $("claimView").hidden = false;
     const pending = (me.claims ?? []).find((c) => c.status === "pending");
     const rejected = (me.claims ?? []).find((c) => c.status === "rejected");
     const box = $("claimStatus");
-    box.replaceChildren(
-      pending ? el("div", { class: "notice warn", style: "margin:0",
-                            text: `${pending.bid} 승인 대기 중입니다.` })
-      : rejected ? el("div", { class: "notice bad", style: "margin:0",
-                            text: `연결 신청이 거절되었습니다.${rejected.note ? " 사유: " + rejected.note : ""}` })
-      : el("div", { class: "notice warn", style: "margin:0",
-                            text: "아직 연결 신청을 하지 않았습니다." }));
+    box.replaceChildren(el("div", { class: "notice", style: "margin:0",
+      text: "현재는 시청자 계정으로 로그인되어 있습니다. 시장 공유 링크를 받았다면 그 링크를 열어 보상을 구매하세요." }));
     return;
   }
 
@@ -1177,6 +1165,15 @@ async function start() {
   loadConn();
   startConnPolling();
 }
+
+$("activateStreamer").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    await api("/api/streamer/activate", { method: "POST" });
+    msg("ok", "내 방송국 관리 기능을 활성화했습니다.");
+    start();
+  } catch (err) { msg("bad", err.message); e.target.disabled = false; }
+});
 
 // 소셜 로그인 콜백으로 돌아온 경우 프래그먼트에서 토큰을 꺼낸다.
 (function bootstrap() {

@@ -80,6 +80,7 @@ func (s *Server) Routes() http.Handler {
 	// 로그인만 필요 (아직 승인 전이어도 접근 가능)
 	mux.Handle("POST /api/logout", s.session(s.handleLogout))
 	mux.Handle("GET /api/me", s.session(s.handleMe))
+	mux.Handle("POST /api/streamer/activate", s.session(s.handleActivateStreamer))
 	mux.Handle("POST /api/claim", s.session(s.handleSubmitClaim))
 	mux.Handle("GET /api/claims", s.session(s.handleMyClaims))
 
@@ -97,6 +98,7 @@ func (s *Server) Routes() http.Handler {
 	s.shopRoutes(mux)
 
 	// 스트리머 대시보드 (웹)
+	mux.Handle("GET /market/{token}", s.marketPage())
 	mux.Handle("GET /", s.dashboardPage())
 	mux.Handle("GET /welcome", s.welcomePage())
 	mux.Handle("GET /guide", s.guidePage())
@@ -240,6 +242,28 @@ func (s *Server) handleSubmitClaim(w http.ResponseWriter, r *http.Request) error
 	}
 	s.Log.Info("연결 신청", "account", accountOf(r).SoopID, "bid", c.BID, "status", c.Status)
 	writeJSON(w, http.StatusOK, c)
+	return nil
+}
+
+// handleActivateStreamer는 현재 로그인한 SOOP 계정의 방송국만 즉시 활성화한다.
+// 시청자 계정은 로그인만으로 스트리머 권한을 얻지 않게 분리한다.
+func (s *Server) handleActivateStreamer(w http.ResponseWriter, r *http.Request) error {
+	acct := accountOf(r)
+	claim, err := auth.ActivateVerifiedStreamer(r.Context(), s.Store.Pool, acct.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.EnsureStreamer(r.Context(), claim.BID, claim.SoopNick); err != nil {
+		return err
+	}
+	if s.Streamer != nil {
+		s.Streamer.Add(context.WithoutCancel(r.Context()), claim.BID)
+		if official, ok := s.Streamer.(OfficialChatHook); ok {
+			official.PromoteOfficial(context.WithoutCancel(r.Context()), claim.BID)
+		}
+	}
+	s.Log.Info("스트리머 기능 활성화", "bid", claim.BID, "account", acct.ID)
+	writeJSON(w, http.StatusOK, claim)
 	return nil
 }
 
