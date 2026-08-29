@@ -6,7 +6,7 @@
 <style>
 :root{--blue:#1757d9;--sky:#eaf4ff;--ink:#102040;--muted:#64748b;--line:#dce5f3;--good:#087a52;--bad:#c23737;background:#f4f8ff;color:var(--ink)}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Noto Sans KR",sans-serif}header{background:linear-gradient(110deg,#164cce,#159ee5);color:#fff;padding:26px max(20px,calc((100% - 1100px)/2));display:flex;justify-content:space-between;gap:16px;align-items:center}a{color:inherit}.brand{font-size:20px;font-weight:800;text-decoration:none}.wrap{max-width:1100px;margin:30px auto;padding:0 20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 8px 28px #1d4d8c0d}.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}.hero h1{margin:0;font-size:28px}.muted{color:var(--muted)}.balance{font-weight:800;color:var(--blue);font-size:18px}.grid{display:grid;grid-template-columns:1fr 310px;gap:20px}.items{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.item{border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:9px}.item img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:var(--sky)}.item h3{margin:0;font-size:16px}.price{color:var(--blue);font-weight:800}.stock{font-size:12px;color:var(--muted)}.qty{display:flex;align-items:center;gap:8px}.qty button{width:30px;height:30px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:18px;cursor:pointer}.qty output{min-width:22px;text-align:center;font-weight:700}.cart{position:sticky;top:18px;height:max-content}.cart h2{font-size:18px;margin:0 0 12px}.cartline{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--line)}.total{display:flex;justify-content:space-between;font-size:18px;font-weight:800;border-top:1px solid var(--line);padding-top:14px;margin-top:12px}button.primary{border:0;border-radius:9px;background:var(--blue);color:#fff;font-weight:800;padding:12px 16px;cursor:pointer;width:100%;margin-top:16px}button.primary:disabled{opacity:.5;cursor:not-allowed}.notice{margin:0 0 18px;border-radius:12px;padding:14px 16px;background:var(--sky);color:#17477e}.notice.bad{background:#fff0f0;color:var(--bad)}.login{max-width:480px;margin:70px auto;text-align:center}.login h1{margin-top:0}.empty{padding:28px;color:var(--muted);text-align:center}.success{background:#ecfdf5;color:var(--good)}@media(max-width:760px){header{padding:18px 20px}.wrap{margin:20px auto}.grid{grid-template-columns:1fr}.cart{position:static}.hero h1{font-size:23px}}
-.my-orders{margin-top:20px}.my-order{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--line)}.my-order:first-of-type{border-top:0}.my-order .meta{display:grid;gap:2px;min-width:0}.my-order .meta strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.my-order .meta span{font-size:13px;color:var(--muted)}button.cancel{border:1px solid #f0b9b9;background:#fff;color:var(--bad);border-radius:7px;padding:7px 10px;white-space:nowrap;cursor:pointer}
+.my-orders{margin-top:20px}.my-order{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--line)}.my-order:first-of-type{border-top:0}.my-order .meta{display:grid;gap:2px;min-width:0}.my-order .meta strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.my-order .meta span{font-size:13px;color:var(--muted)}button.cancel{border:1px solid #f0b9b9;background:#fff;color:var(--bad);border-radius:7px;padding:7px 10px;white-space:nowrap;cursor:pointer}.privacy-check{display:flex;align-items:flex-start;gap:8px;margin-top:13px;text-align:left;color:var(--muted);font-size:12px;line-height:1.45;cursor:pointer}.privacy-check input{width:auto;margin:3px 0 0;flex:0 0 auto}.privacy-check a{color:var(--blue)}
 </style>
 </head><body>
 <header><a class="brand" href="/">SoopTalent</a><span id="who" class="muted" style="color:#e9f5ff"></span></header>
@@ -57,6 +57,35 @@ function marketOrderHistory(){
 async function loadMarket(){data=await api(`/api/market/${encodeURIComponent(marketToken)}`);render()}
 async function checkout(lines,total){if(!confirm(`${num(total)} 달란트를 사용해 구매하시겠습니까?`))return;const key=crypto.randomUUID().replaceAll("-","");try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders`,{method:"POST",body:JSON.stringify({requestKey:key,lines})});cart.clear();await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`구매가 완료되었습니다. ${num(r.order.totalPrice)} 달란트가 차감되었습니다.`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
 async function cancelOrder(id){if(!confirm("이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 달란트는 즉시 환불됩니다."))return;try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders/${id}/cancel`,{method:"POST"});await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`${num(r.order.totalPrice)} 달란트를 환불했습니다.`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
-async function start(){try{parseCallback()}catch(e){$(el("div",{class:"notice bad"},e.message));return}const state=await fetch(`/api/market/${encodeURIComponent(marketToken)}/state`);if(state.status===410){const b=await state.json().catch(()=>({}));closed(b.error);return}if(!state.ok){$(el("div",{class:"notice bad"},"이 달란트 시장을 찾을 수 없습니다."));return}if(!token){$(el("section",{class:"login"},el("h1",{},"달란트 시장"),el("p",{class:"muted"},"보상을 구매하려면 SOOP으로 로그인해 주세요."),el("button",{class:"primary",onclick:login},"SOOP으로 로그인")));return}try{await loadMarket()}catch(e){if(e.status===401){localStorage.removeItem(KEY);token="";start()}else if(e.status===410)closed(e.message);else $(el("div",{class:"notice bad"},e.message))}}
+async function start() {
+  try { parseCallback(); }
+  catch (e) { $(el("div", { class:"notice bad" }, e.message)); return; }
+  const state = await fetch(`/api/market/${encodeURIComponent(marketToken)}/state`);
+  if (state.status === 410) { const b = await state.json().catch(() => ({})); closed(b.error); return; }
+  if (!state.ok) { $(el("div", { class:"notice bad" }, "이 달란트 시장을 찾을 수 없습니다.")); return; }
+  if (!token) {
+    const button = el("button", { class:"primary", onclick:login, disabled:true }, "SOOP으로 로그인");
+    const consent = el("input", { type:"checkbox" });
+    consent.addEventListener("change", () => { button.disabled = !consent.checked; });
+    const consentText = el("span", {},
+      el("a", { href:"/privacy", target:"_blank", rel:"noopener" }, "개인정보처리방침"),
+      "을 확인했고, SOOP 아이디·닉네임과 구매 처리 정보의 처리에 동의합니다. ",
+      el("strong", {}, "(필수)"),
+    );
+    $(el("section", { class:"login" },
+      el("h1", {}, "달란트 시장"),
+      el("p", { class:"muted" }, "보상을 구매하려면 SOOP으로 로그인해 주세요."),
+      button,
+      el("label", { class:"privacy-check" }, consent, consentText),
+    ));
+    return;
+  }
+  try { await loadMarket(); }
+  catch (e) {
+    if (e.status === 401) { localStorage.removeItem(KEY); token = ""; start(); }
+    else if (e.status === 410) closed(e.message);
+    else $(el("div", { class:"notice bad" }, e.message));
+  }
+}
 start();
 </script></body></html>

@@ -94,6 +94,10 @@
   .notice.warn{background:var(--warn-bg);color:var(--warn)}
   .notice.bad{background:var(--bad-bg);color:var(--bad)}
   .notice:empty{display:none}
+  .privacy-notice { margin:0; padding:10px 11px; border:1px solid var(--line); border-radius:6px;
+                    background:var(--bg); color:var(--fg-muted); font-size:12.5px; line-height:1.55; }
+  .privacy-check { display:flex; align-items:flex-start; gap:8px; color:var(--fg-muted); font-size:12.5px; line-height:1.5; cursor:pointer; }
+  .privacy-check input { width:auto; margin:3px 0 0; flex:0 0 auto; }
 
   .badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px;
            border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
@@ -259,6 +263,7 @@
     <div class="card stack" style="max-width:400px;margin:0 auto">
       <h2 id="authTitle">로그인</h2>
       <div class="stack" id="socialBox"></div>
+      <label class="privacy-check"><input id="privacyConsent" type="checkbox"><span><a href="/privacy" target="_blank" rel="noopener">개인정보처리방침</a>을 확인했고, SOOP 아이디·닉네임과 달란트·구매 처리에 필요한 정보의 처리에 동의합니다. <strong>(필수)</strong></span></label>
       <p class="small muted" id="socialHelp" hidden>로그인 제공자를 설정 중입니다. 잠시 후 다시 시도해 주세요.</p>
     </div>
   </section>
@@ -545,6 +550,7 @@ function signOut() {
   $("profileView").hidden = true;
   $("profileMenu").hidden = true;
   $("whoami").hidden = true;
+  $("privacyConsent").checked = false;
   loadProviders();
 }
 
@@ -558,6 +564,7 @@ async function loadProviders() {
     for (const p of list) {
       const button = el("button", {
         class: p.id === "soop" ? "primary oauth-soop" : "primary",
+        disabled: !$("privacyConsent").checked,
         onclick: () => {
           // 웹에서는 서버 콜백이 이 페이지로 되돌아온다.
           const back = location.origin + location.pathname;
@@ -570,6 +577,12 @@ async function loadProviders() {
     }
   } catch { /* 소셜 로그인 미설정 */ }
 }
+
+$("privacyConsent").addEventListener("change", () => {
+  document.querySelectorAll("#socialBox button").forEach((button) => {
+    button.disabled = !$("privacyConsent").checked;
+  });
+});
 
 $("logout").addEventListener("click", async () => {
   try { await api("/api/logout", { method: "POST" }); } catch {}

@@ -6,27 +6,41 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>개인정보처리방침 | SoopTalent</title>
 <style>
-  :root { --blue:#1768e8; --ink:#18233a; --muted:#5f6d84; --line:#dfe6f2; --soft:#f5f8ff; }
-  *{box-sizing:border-box} body{margin:0;color:var(--ink);font:15px/1.78 "Pretendard","Malgun Gothic","Segoe UI",sans-serif;background:#fff} main{max-width:800px;margin:0 auto;padding:36px 22px 90px} header{padding-bottom:20px;border-bottom:1px solid var(--line)} .brand{display:inline-flex;align-items:center;gap:8px;color:var(--blue);font-weight:800;text-decoration:none}.brand img{width:27px;height:27px;object-fit:contain} h1{font-size:29px;letter-spacing:-.035em;margin:24px 0 6px} h2{font-size:20px;margin:38px 0 10px;letter-spacing:-.02em} h3{font-size:16px;margin:22px 0 7px} p,li{color:var(--muted)} .date{color:var(--muted);font-size:13px}.notice{padding:17px 19px;background:var(--soft);border:1px solid #dbe8ff;border-radius:12px;color:var(--muted)} table{border-collapse:collapse;width:100%;margin:12px 0;overflow:hidden;border:1px solid var(--line);border-radius:10px}th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--soft);font-size:14px}tr:last-child td{border-bottom:0}a{color:var(--blue)}
+  :root{--blue:#1768e8;--ink:#18233a;--muted:#5f6d84;--line:#dfe6f2;--soft:#f5f8ff;--warn:#7c5811;--warnbg:#fff8e8}
+  *{box-sizing:border-box}body{margin:0;color:var(--ink);font:15px/1.78 "Pretendard","Malgun Gothic","Segoe UI",sans-serif;background:#fff}main{max-width:800px;margin:0 auto;padding:36px 22px 90px}header{padding-bottom:20px;border-bottom:1px solid var(--line)}.brand{display:inline-flex;align-items:center;gap:8px;color:var(--blue);font-weight:800;text-decoration:none}.brand img{width:27px;height:27px;object-fit:contain}h1{font-size:29px;letter-spacing:-.035em;margin:24px 0 6px}h2{font-size:20px;margin:38px 0 10px;letter-spacing:-.02em}h3{font-size:16px;margin:22px 0 7px}p,li{color:var(--muted)}.date{color:var(--muted);font-size:13px}.notice{padding:17px 19px;background:var(--soft);border:1px solid #dbe8ff;border-radius:12px;color:var(--muted)}.notice b{color:var(--ink)}.notice.warn{margin-top:12px;background:var(--warnbg);border-color:#f2dfae;color:var(--warn)}table{border-collapse:collapse;width:100%;margin:12px 0;overflow:hidden;border:1px solid var(--line);border-radius:10px}th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--soft);font-size:14px}tr:last-child td{border-bottom:0}a{color:var(--blue)}
 </style>
 </head>
 <body><main>
 <header><a class="brand" href="/"><img src="/favicon.svg" alt="">SoopTalent</a></header>
-<h1>개인정보처리방침</h1><div class="date">최종 수정일: 2026년 8월 29일</div>
-<p class="notice">SoopTalent은 스트리머가 SOOP 시청자의 방송 참여를 달란트로 관리할 수 있도록 돕는 서비스입니다. 광고·행태 분석·개인정보 판매를 하지 않습니다.</p>
-<h2>1. 수집·이용하는 정보</h2>
-<table><thead><tr><th>정보</th><th>이용 목적</th></tr></thead><tbody>
-<tr><td>SOOP OAuth로 검증한 SOOP 아이디·닉네임</td><td>로그인, 계정 식별, 관리자 권한 확인</td></tr>
-<tr><td>암호화된 SOOP OAuth 토큰</td><td>방송국 본인 확인, 공식 채팅 수집 및 토큰 자동 갱신</td></tr>
-<tr><td>공개 채팅의 참여자 아이디·닉네임·메시지·시간, 공개 랭킹 정보</td><td>스트리머별 달란트 적립과 적립 내역 표시</td></tr>
-<tr><td>게시글·댓글 식별값 및 시장 구매 내역</td><td>수동 달란트 지급, 달란트 시장 주문 처리</td></tr>
-<tr><td>스트리머가 등록한 보상 이미지·설정값</td><td>달란트 시장과 지급 기준 표시</td></tr>
+<h1>개인정보처리방침</h1><div class="date">최종 수정일: 2026년 8월 30일</div>
+<p class="notice"><b>SoopTalent은 스트리머의 방송 참여 보상과 달란트 시장 운영을 돕는 서비스입니다.</b><br>광고 목적의 프로파일링, 개인정보 판매, 다른 방송국에 대한 데이터 제공을 하지 않습니다. 달란트와 구매 내역은 스트리머별로 분리합니다.</p>
+
+<h2>1. 처리하는 정보와 목적</h2>
+<table><thead><tr><th>처리하는 정보</th><th>처리 목적</th></tr></thead><tbody>
+<tr><td>SOOP 아이디, 최신 닉네임, 로그인·접속 정보</td><td>SOOP 로그인, 계정 식별, 달란트 잔액·구매내역 표시, 스트리머·관리자 권한 확인</td></tr>
+<tr><td>스트리머의 암호화된 SOOP OAuth 토큰</td><td>방송국 본인 확인, 승인된 공식 API·Chat SDK 연결 및 토큰 갱신</td></tr>
+<tr><td>방송 참여자의 SOOP 아이디·닉네임, 공개 채팅 메시지·이벤트·발생 시각, 시청·채팅 랭킹</td><td>해당 방송국의 시청 체류·채팅·후원·구독 등 활동에 대한 달란트 적립, 중복·부정 적립 방지, 적립 내역 확인</td></tr>
+<tr><td>게시글·댓글 식별값과 링크</td><td>스트리머의 게시글·댓글 직접 지급과 지급 사유 기록</td></tr>
+<tr><td>선택한 보상, 수량, 가격, 구매·취소·환불 내역</td><td>달란트 시장의 구매 처리, 재고·인당 제한 확인, 주문·환불 내역 제공</td></tr>
+<tr><td>스트리머가 등록한 보상 이미지·시장·달란트 기준 설정</td><td>달란트 시장과 스트리머 대시보드 표시·운영</td></tr>
 </tbody></table>
-<h2>2. 수집 방법과 범위</h2><p>정보는 사용자가 SOOP OAuth 로그인·설정 저장·시장 등록을 할 때, 또는 스트리머가 연결한 공개 SOOP 방송 및 방송국에서 기능 수행에 필요한 범위로 수집됩니다. 로그인 계정에는 이메일이나 브라우저 정보 대신 SOOP 아이디와 최신 닉네임만 저장합니다. SOOP 비밀번호, 다른 채널의 시청 기록, 개인 메시지는 수집하지 않습니다.</p>
-<h2>3. 확장 프로그램과 달란트 시장의 처리</h2><p><strong>스트리머 확장</strong>은 로그인 세션 토큰과 동기화 상태를 브라우저 저장소에 보관하고, 일별 공개 랭킹·수동 달란트 지급 요청을 서비스로 전송합니다. <strong>달란트 시장</strong>은 별도 시청자 확장 없이 웹사이트에서 SOOP 로그인을 통해 이용하며, 로그인한 SOOP 아이디·최신 닉네임·선택한 보상·구매 내역을 결제와 주문 확인에 필요한 범위에서 처리합니다. 광고, 추적기, 판매 목적의 분석 기능을 포함하지 않습니다.</p>
-<h2>4. 보관 기간과 삭제</h2><p>계정, 달란트 적립 내역, 시장 주문 정보는 서비스 제공과 부정 적립 방지를 위해 서비스 이용 기간 동안 보관합니다. 삭제를 원하면 아래 문의처로 요청할 수 있으며, 법령상 보관 의무가 없는 정보는 처리 목적이 끝난 뒤 삭제하거나 익명화합니다.</p>
-<h2>5. 제3자 제공과 처리 위탁</h2><p>개인정보를 판매하거나 광고·분석 사업자에게 제공하지 않습니다. SOOP OAuth 로그인과 공식 Chat SDK 연결 과정에서 SOOP이 각자의 정책에 따라 인증 정보를 처리합니다. SOOP에 대한 요청은 사용자가 사용하는 확장 프로그램 또는 서비스 기능을 통해 승인된 기능 범위에서 이루어집니다.</p>
-<h2>6. 이용자의 권리</h2><p>이용자는 자신의 정보에 대한 열람·정정·삭제·처리 정지를 요청할 수 있습니다. 타인의 방송 참여 정보는 해당 스트리머의 운영 범위와 관계 법령을 고려해 처리합니다.</p>
-<h2>7. 문의</h2><p>서비스 관련 개인정보 문의와 삭제 요청은 Discord <strong>@cagea1</strong>로 보내 주세요.</p>
-<h2>8. 변경 안내</h2><p>방침이 바뀌면 이 페이지의 최종 수정일을 갱신해 안내합니다.</p>
+
+<h2>2. 수집 방법과 최소 수집</h2>
+<p>정보는 사용자의 SOOP OAuth 로그인, 스트리머의 확장 프로그램 동기화·직접 지급, 달란트 시장 이용, 그리고 스트리머가 연결한 SOOP 방송의 승인된 기능을 통해 수집합니다. 로그인 계정에는 이메일·전화번호·SOOP 비밀번호를 저장하지 않습니다. 다른 방송국의 시청 기록, 개인 쪽지, 로그인 비밀번호도 수집하지 않습니다.</p>
+<p class="notice warn">방송 참여자의 공개 활동 정보는 해당 스트리머 방송국의 달란트 적립에만 사용됩니다. 스트리머는 방송국 공지 등으로 달란트 운영 및 이 방침을 시청자에게 안내해야 합니다.</p>
+
+<h2>3. SOOP 로그인과 확장 프로그램</h2>
+<p>SOOP 로그인은 SOOP의 인증 화면에서 진행되며 SoopTalent은 비밀번호를 받지 않습니다. 스트리머 확장 프로그램은 로그인 세션 토큰과 동기화 상태를 브라우저에 보관하고, 일별 랭킹과 직접 지급 요청을 서비스로 전송합니다. 달란트 시장은 별도 시청자 확장 프로그램 없이 웹에서 SOOP 로그인 후 이용할 수 있습니다.</p>
+
+<h2>4. 보관 기간과 삭제</h2>
+<p>계정 정보, 달란트 적립·환불 내역, 시장 주문 정보는 서비스 제공, 잔액 정산, 부정 적립 방지와 분쟁 확인에 필요한 기간 동안 보관합니다. 스트리머의 OAuth 토큰은 연결 해제·권한 철회 또는 서비스 종료 시 삭제합니다. 삭제 또는 처리 정지를 요청하면 법령상 보관 의무나 정산·분쟁 처리에 필요한 경우를 제외하고 목적 달성 후 삭제하거나 식별되지 않도록 처리합니다.</p>
+
+<h2>5. 제3자 제공·처리위탁</h2>
+<p>개인정보를 판매하거나 광고·분석 사업자에게 제공하지 않습니다. SOOP OAuth 로그인과 공식 API·Chat SDK 연결 과정에서 SOOP은 자체 정책에 따라 인증·방송 기능을 처리합니다. 서비스 운영을 위해 필요한 범위의 호스팅·데이터베이스 인프라를 이용할 수 있으며, 목적 외 이용이나 제3자 제공을 하지 않습니다.</p>
+
+<h2>6. 이용자의 권리와 문의</h2>
+<p>이용자는 자신의 정보에 대한 열람, 정정, 삭제, 처리 정지를 요청할 수 있습니다. 요청 시 본인 확인 후 처리합니다. 개인정보 관련 문의·삭제 요청은 Discord <strong>@cagea1</strong>로 보내 주세요.</p>
+
+<h2>7. 방침 변경</h2>
+<p>처리 목적이나 항목이 바뀌면 이 페이지의 최종 수정일을 갱신해 안내합니다.</p>
 </main></body></html>
