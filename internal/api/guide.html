@@ -61,6 +61,13 @@
   .tip b { display:block; margin-bottom:2px; }
   .list { margin:0; padding-left:19px; }
   .list li { margin:7px 0; }
+  figure { margin:18px 0 0; }
+  figure svg { display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:var(--r); background:var(--soft); }
+  figcaption { margin-top:7px; color:var(--muted); font-size:13px; text-align:center; }
+  svg .box { fill:var(--bg); stroke:var(--line); stroke-width:1.5; }
+  svg .sub { fill:var(--muted); font:12px sans-serif; }
+  svg .btn { fill:var(--blue); }
+  svg .btntx { fill:#fff; font:700 11.5px sans-serif; }
   details { margin:9px 0; padding:12px 15px; border:1px solid var(--line); border-radius:var(--r); background:var(--soft); }
   summary { cursor:pointer; font-weight:700; }
   details p { margin:9px 0 0; color:var(--muted); }
@@ -122,6 +129,24 @@
       <li>지급 후에는 쪽지 버튼으로 지급 사유가 적힌 쪽지를 직접 보낼 수 있습니다.</li>
       <li>모든 지급 내역은 <strong>달란트 내역</strong>에 이유와 링크가 함께 기록됩니다.</li>
     </ul>
+    <figure>
+      <svg viewBox="0 0 700 190" role="img" aria-labelledby="give-example">
+        <title id="give-example">추천 버튼 옆의 달란트 주기 버튼과 지급 후 쪽지 버튼</title>
+        <rect class="box" x="20" y="18" width="660" height="66" rx="8"/>
+        <text class="sub" x="48" y="56">👍 564</text>
+        <rect class="btn" x="112" y="36" width="96" height="28" rx="14"/>
+        <text class="btntx" x="160" y="55" text-anchor="middle">달란트 주기</text>
+        <text class="sub" x="640" y="56" text-anchor="end">↗ 공유</text>
+        <rect class="box" x="20" y="104" width="660" height="66" rx="8"/>
+        <text class="sub" x="48" y="142">👍 564</text>
+        <rect class="box" x="112" y="122" width="60" height="28" rx="14" style="fill:var(--green-bg);stroke:var(--green)"/>
+        <text x="142" y="141" text-anchor="middle" style="fill:var(--green);font:600 12px sans-serif">+50</text>
+        <rect class="btn" x="180" y="122" width="56" height="28" rx="14"/>
+        <text class="btntx" x="208" y="141" text-anchor="middle">쪽지</text>
+        <text class="sub" x="640" y="142" text-anchor="end">↗ 공유</text>
+      </svg>
+      <figcaption>지급 뒤에는 금액과 쪽지 버튼이 함께 표시됩니다.</figcaption>
+    </figure>
   </section>
 
   <section id="market">
