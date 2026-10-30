@@ -284,7 +284,7 @@
   <section id="profileView" hidden>
     <div class="card stack">
       <div class="row" style="justify-content:space-between">
-        <div><h2 style="margin-bottom:2px">내 구매내역</h2><p class="small muted" style="margin:0">내 SOOP 계정으로 구매한 달란트 시장 내역입니다.</p></div>
+        <div><h2 style="margin-bottom:2px">내 구매내역</h2><p class="small muted" style="margin:0">내 SOOP 계정의 보상 구매 내역입니다.</p></div>
         <button class="sm" id="profileClose" type="button">홈으로</button>
       </div>
       <div id="myOrders" class="muted small">구매 내역을 불러오는 중…</div>
@@ -308,7 +308,7 @@
       <div id="claimStatus"></div>
       <p class="muted small" style="margin:0">
         시청자는 스트리머가 공유한 달란트 시장 링크에서 보상을 구매할 수 있습니다.
-        내 방송의 달란트를 운영하려면 아래에서 스트리머 기능을 활성화하세요.
+        내 방송의 보상을 운영하려면 아래에서 스트리머 기능을 활성화하세요.
       </p>
       <button class="primary" id="activateStreamer">내 방송국 관리 시작</button>
     </div>
@@ -457,7 +457,7 @@
           <span>최소 글자 수</span><span><input type="number" id="chat.minLength" min="1" max="50"> 자</span>
           <span>분당 인정 건수</span><span><input type="number" id="chat.perMinuteCap" min="1" max="60"> 건</span>
           <span>하루 최대</span><span><input type="number" id="chat.dailyCap" min="0" max="100000"> 달란트</span>
-          <span class="hint">도배로 달란트를 쌓는 것을 막는 값입니다.</span>
+          <span class="hint">도배로 과도하게 적립되는 것을 막는 값입니다.</span>
         </div>
       </div>
 
@@ -506,7 +506,34 @@
   </footer>
 </div>
 
+<dialog id="rewardUnitDialog" aria-labelledby="rewardUnitTitle" style="border:1px solid var(--line);border-radius:16px;padding:26px;width:min(440px,calc(100% - 32px));color:var(--fg);background:var(--bg)">
+  <form id="rewardUnitForm" class="stack">
+    <h2 id="rewardUnitTitle">보상 단위를 정해주세요</h2>
+    <p class="small muted" style="margin:0">스트리머 승인이 완료되었습니다. 내 방송에서 사용할 보상의 단위 이름을 정해주세요.</p>
+    <div class="field"><label class="label" for="rewardUnitInput">단위 이름</label><input id="rewardUnitInput" value="달란트" maxlength="16" required autocomplete="off" placeholder="예: 달란트, 달러, 코인"><span class="hint">1~16자. 최초 한 번 설정하며, 금액이나 지급 기준은 바뀌지 않습니다.</span></div>
+    <div class="stat"><div class="k">표시 예시</div><div class="v" id="rewardUnitPreview">100 달란트</div></div>
+    <p class="small neg" id="rewardUnitError" role="alert" hidden></p>
+    <button type="submit" class="primary" id="rewardUnitSave">이 단위로 시작하기</button>
+  </form>
+</dialog>
 <script>
+const DEFAULT_UNIT = "달란트";
+let rewardUnit = DEFAULT_UNIT;
+const unitText = (text, unit = rewardUnit) => String(text ?? "").split(DEFAULT_UNIT).join(unit);
+// Capture authored labels once, before API content is inserted. Never rewrite
+// viewer names, reward titles, reasons, URLs or other user-provided text.
+const unitLabels = [];
+const unitWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+while (unitWalker.nextNode()) {
+  const node = unitWalker.currentNode;
+  if (node.data.includes(DEFAULT_UNIT) && !node.parentElement.closest("script,style,#rewardUnitDialog")) unitLabels.push([node,node.data]);
+}
+const defaultTitle = document.title;
+function applyRewardUnit(unit) {
+  rewardUnit = unit || DEFAULT_UNIT;
+  for (const [node,original] of unitLabels) if (node.isConnected) node.data = unitText(original);
+  document.title = unitText(defaultTitle);
+}
 const $ = (id) => document.getElementById(id);
 const KEY = "sooptalent.token";
 let token = localStorage.getItem(KEY) || "";
@@ -534,6 +561,8 @@ async function api(path, opts = {}) {
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const e = new Error(body?.error || `요청 실패 (HTTP ${res.status})`);
+    e.status = res.status;
+    e.message = unitText(e.message);
     e.code = body?.code;
     throw e;
   }
@@ -571,6 +600,8 @@ function soopMark() {
 
 // ── 인증 ─────────────────────────────────────────────────────────────
 function signOut() {
+  $("rewardUnitDialog").close();
+  applyRewardUnit(DEFAULT_UNIT);
   token = ""; me = null;
   localStorage.removeItem(KEY);
   stopConnPolling();
@@ -622,10 +653,12 @@ $("logout").addEventListener("click", async () => {
   signOut();
 });
 
+const myOrderUnits = new Map();
 function myOrderTable(orders) {
   if (!orders.length) return el("div", { class: "empty", text: "아직 구매한 보상이 없습니다." });
   const tb = el("tbody");
   for (const o of orders) {
+    myOrderUnits.set(o.id, o.rewardUnit || DEFAULT_UNIT);
     const isFulfilled = o.status === "fulfilled";
     const isCancelled = o.status === "cancelled";
     const detail = (o.lines ?? []).map((l) => l.quantity > 1 ? `${l.itemName} x${l.quantity}` : l.itemName).join(", ")
@@ -641,7 +674,7 @@ function myOrderTable(orders) {
       el("td", { class: "small muted", text: fmtDate(o.orderedAt) }),
       el("td", { text: o.marketTitle ? `${o.marketTitle} (${o.streamerId})` : o.streamerId }),
       el("td", { text: detail }),
-      el("td", { class: "n " + (isFulfilled ? "neg" : isCancelled ? "pos" : ""), text: amount }),
+      el("td", { class: "n " + (isFulfilled ? "neg" : isCancelled ? "pos" : ""), text: `${amount} ${o.rewardUnit || DEFAULT_UNIT}` }),
       el("td", {}, el("span", { class: `badge ${state[0]}`, text: state[1] })),
       el("td", {}, cancel)));
   }
@@ -649,7 +682,7 @@ function myOrderTable(orders) {
     el("table", {},
       el("thead", {}, el("tr", {},
         el("th", { text: "구매 시각" }), el("th", { text: "시장" }), el("th", { text: "보상" }),
-        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }), el("th", { text: "" }))), tb));
+        el("th", { style: "text-align:right", text: "증감" }), el("th", { text: "상태" }), el("th", { text: "" }))), tb));
 }
 
 async function openProfile() {
@@ -661,10 +694,11 @@ async function openProfile() {
 }
 
 async function cancelMyOrder(id) {
-  if (!confirm("이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 달란트는 즉시 환불됩니다.")) return;
+  const orderUnit = myOrderUnits.get(id) || DEFAULT_UNIT;
+  if (!confirm(`이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 ${orderUnit} 전액이 즉시 환불됩니다.`)) return;
   try {
     const result = await api(`/api/me/orders/${id}/cancel`, { method: "POST" });
-    msg("ok", `${fmtNum(result.order.totalPrice)} 달란트를 환불했습니다.`);
+    msg("ok", `${fmtNum(result.order.totalPrice)} ${orderUnit} 환불 완료`);
     openProfile();
   } catch (e) { msg("bad", e.message); openProfile(); }
 }
@@ -742,7 +776,7 @@ function renderConn(s) {
 
   // 채팅 연동 — 여기서만 켜고 끌 수 있다
   const c = s.chat;
-  const bits = [c.source, c.detail];
+  const bits = [c.source, unitText(c.detail)];
   if (c.broadNo) bits.push(`방송 ${c.broadNo}`);
   if (c.lastPacketAt) bits.push(`마지막 수신 ${ago(c.lastPacketAt)}`);
   if (c.packets) bits.push(`누적 ${fmtNum(c.packets)}건`);
@@ -782,8 +816,8 @@ async function loadConn({ announce = false } = {}) {
 async function setChat(on) {
   if (!on && !confirm(
       "채팅 연동을 끕니다.\n\n" +
-      "시청 체류·채팅·별풍선/애드벌룬 후원·첫 후원 팬클럽·구독 달란트가 더 이상 쌓이지 않습니다.\n" +
-      "별별랭킹 동기화·게시판 직접 지급·달란트 시장은 그대로 동작합니다.\n\n계속할까요?")) {
+      unitText("시청 체류·채팅·별풍선/애드벌룬 후원·첫 후원 팬클럽·구독 달란트 적립이 중지됩니다.\n") +
+      unitText("별별랭킹 동기화·게시판 직접 지급·달란트 시장은 그대로 동작합니다.\n\n계속할까요?"))) {
     return;
   }
   try {
@@ -792,7 +826,7 @@ async function setChat(on) {
     });
     msg("ok", on
       ? "채팅 연동을 켰습니다. 방송 중이면 곧 수집이 시작됩니다."
-      : "채팅 연동을 껐습니다. 쌓인 달란트는 그대로 남습니다.");
+      : "채팅 연동을 껐습니다. 기존 잔액은 그대로 유지됩니다.");
   } catch (e) {
     msg("bad", e.message);
   }
@@ -827,7 +861,7 @@ async function loadOverview() {
     const tb = $("holders");
     tb.replaceChildren();
     if (!holders.length) {
-      tb.append(el("tr", {}, el("td", { colspan: "3", class: "empty", text: "아직 달란트 보유자가 없습니다." })));
+      tb.append(el("tr", {}, el("td", { colspan: "3", class: "empty", text: unitText("아직 달란트 보유자가 없습니다.") })));
       return;
     }
     holders.forEach((h, i) => {
@@ -877,7 +911,7 @@ function talentEntry(r, compact = false) {
   const amount = Number(r.amount || 0);
   const reason = logReason(r.reason);
   const name = r.nickname || r.userId || "알 수 없는 시청자";
-  const amountText = `${amount >= 0 ? "+" : "−"}${fmtNum(Math.abs(amount))} 달란트`;
+  const amountText = `${amount >= 0 ? "+" : "−"}${fmtNum(Math.abs(amount))} ${rewardUnit}`;
 
   const meta = [el("span", { text: fmtDate(r.occurredAt) })];
   if (reason.url) {
@@ -1303,7 +1337,7 @@ function openBody(p) {
     ordersHeader(p, true),
     orders,
     el("div", { class: "notice warn", style: "margin:0" },
-      "시장 닫기는 구매를 확정한 채 접근만 막습니다. 시장 취소를 선택하면 모든 확정 구매의 달란트가 시청자에게 전액 환불됩니다."),
+      unitText("시장 닫기는 구매를 확정한 채 접근만 막습니다. 시장 취소를 선택하면 모든 확정 구매의 달란트가 시청자에게 전액 환불됩니다.")),
     el("div", { class: "row" },
       el("button", {
         class: "primary", text: "시장 닫기 (구매 확정)",
@@ -1320,11 +1354,11 @@ function openBody(p) {
       el("button", {
         class: "danger", text: "시장 취소 · 전액 환불",
         onclick: async (e) => {
-          if (!confirm("시장을 취소할까요?\n\n현재까지 확정된 모든 구매의 달란트가 각 시청자에게 전액 환불됩니다. 나중에 다시 열면 환불된 주문은 새 시장의 재고·인당 제한에 포함되지 않습니다.")) return;
+          if (!confirm(unitText("시장을 취소할까요?\n\n현재까지 확정된 모든 구매의 달란트가 각 시청자에게 전액 환불됩니다. 나중에 다시 열면 환불된 주문은 새 시장의 재고·인당 제한에 포함되지 않습니다."))) return;
           e.target.disabled = true;
           try {
             const result = await api(`/api/shop/pages/${p.id}/cancel`, { method: "POST" });
-            msg("ok", `시장을 취소했습니다. ${fmtNum(result.refundedOrders)}건, ${fmtNum(result.refundedTalents)} 달란트를 전액 환불했습니다.`);
+            msg("ok", `시장을 취소했습니다. ${fmtNum(result.refundedOrders)}건, ${fmtNum(result.refundedTalents)} ${rewardUnit} 환불 완료`);
             loadPages();
           } catch (err) { msg("bad", err.message); e.target.disabled = false; }
         },
@@ -1414,7 +1448,7 @@ function orderTable(orders) {
     el("table", {},
       el("thead", {}, el("tr", {},
         el("th", { text: "구매 시각" }), el("th", { text: "시청자" }), el("th", { text: "내용" }),
-        el("th", { style: "text-align:right", text: "달란트" }), el("th", { text: "상태" }))),
+        el("th", { style: "text-align:right", text: rewardUnit }), el("th", { text: "상태" }))),
       tb));
 }
 
@@ -1459,7 +1493,7 @@ $("saveRules").addEventListener("click", async () => {
   } catch (e) { msg("bad", e.message); }
 });
 $("resetRules").addEventListener("click", async () => {
-  if (!confirm("모든 달란트 기준을 기본값으로 되돌립니다. 계속할까요?")) return;
+  if (!confirm(unitText("모든 달란트 기준을 기본값으로 되돌립니다. 계속할까요?"))) return;
   try {
     fillRules(await api("/api/rules/reset", { method: "POST" }));
     msg("ok", "기본값으로 되돌렸습니다.");
@@ -1472,6 +1506,10 @@ async function start() {
     me = await api("/api/me");
   } catch { signOut(); return; }
 
+  applyRewardUnit(me.approvedBid && location.pathname !== "/orders" ? me.rewardUnit : DEFAULT_UNIT);
+  if (me.approvedBid && !me.rewardUnitConfigured) {
+    if (!$("rewardUnitDialog").open) $("rewardUnitDialog").showModal();
+  } else { $("rewardUnitDialog").close(); }
   $("authView").hidden = true;
   $("meLabel").textContent = me.nickname || me.soopId || "SOOP 사용자";
   const avatar = $("meAvatar");
@@ -1499,7 +1537,7 @@ async function start() {
     const activate = $("activateStreamer");
     if (pending) {
       box.replaceChildren(el("div", { class: "notice warn", style: "margin:0",
-        text: "스트리머 승인 신청이 접수되었습니다. 관리자가 승인하면 방송 추적·채팅 SDK·달란트 시장 관리 기능을 바로 사용할 수 있습니다." }));
+        text: unitText("스트리머 승인 신청이 접수되었습니다. 관리자가 승인하면 방송 추적·채팅 SDK·달란트 시장 관리 기능을 바로 사용할 수 있습니다.") }));
       activate.textContent = "스트리머 승인 대기 중";
       activate.disabled = true;
       // 관리자가 승인하면 새로고침을 요구하지 않고 스트리머 화면으로 전환한다.
@@ -1531,6 +1569,25 @@ async function start() {
   loadConn();
   startConnPolling();
 }
+
+$("rewardUnitDialog").addEventListener("cancel", e => e.preventDefault());
+$("rewardUnitInput").addEventListener("input", e => {
+  $("rewardUnitPreview").textContent = `100 ${e.target.value.trim() || DEFAULT_UNIT}`;
+});
+$("rewardUnitForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const button = $("rewardUnitSave");
+  button.disabled = true;
+  $("rewardUnitError").hidden = true;
+  try {
+    await api("/api/streamer/reward-unit", {method:"PUT",body:JSON.stringify({unit:$("rewardUnitInput").value.trim()})});
+    $("rewardUnitDialog").close();
+    await start();
+  } catch (error) {
+    if (error.status === 409) { await start(); }
+    else { $("rewardUnitError").textContent = error.message; $("rewardUnitError").hidden = false; }
+  } finally { button.disabled = false; }
+});
 
 $("activateStreamer").addEventListener("click", async (e) => {
   e.target.disabled = true;

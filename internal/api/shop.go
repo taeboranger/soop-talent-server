@@ -245,7 +245,11 @@ func (s *Server) handleShopOrdersXLSX(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	file, err := shop.OrdersXLSX(page, orders)
+	unit, _, err := s.Store.RewardUnit(r.Context(), bidOf(r))
+	if err != nil {
+		return err
+	}
+	file, err := shop.OrdersXLSX(page, orders, unit)
 	if err != nil {
 		return err
 	}
@@ -286,6 +290,13 @@ func (s *Server) handlePointLog(w http.ResponseWriter, r *http.Request) error {
 	})
 	if err != nil {
 		return err
+	}
+	unit, _, err := s.Store.RewardUnit(r.Context(), bidOf(r))
+	if err != nil {
+		return err
+	}
+	for i := range entries {
+		entries[i].Line = scoring.FormatLogLineWithUnit(entries[i], unit)
 	}
 	writeJSON(w, http.StatusOK, entries)
 	return nil
@@ -346,12 +357,17 @@ func (s *Server) handleGrant(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(w, r, &req); err != nil {
 		return err
 	}
+	unit, _, err := s.Store.RewardUnit(r.Context(), bidOf(r))
+	if err != nil {
+		return err
+	}
 	entry, err := scoring.Grant(r.Context(), s.Store.Pool, bidOf(r),
 		soop.NormalizeUserID(strings.TrimSpace(req.UserID)), req.Amount, req.Reason)
 	if err != nil {
 		return httpError{http.StatusBadRequest, err.Error()}
 	}
 	s.Log.Info("수동 지급", "bid", bidOf(r), "user", entry.UserID, "amount", entry.Amount)
+	entry.Line = scoring.FormatLogLineWithUnit(*entry, unit)
 	writeJSON(w, http.StatusOK, entry)
 	return nil
 }
@@ -437,7 +453,11 @@ func (s *Server) handleMarketState(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": p.Status})
+	unit, _, err := s.Store.RewardUnit(r.Context(), p.BID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": p.Status, "rewardUnit": unit})
 	return nil
 }
 
@@ -458,11 +478,16 @@ func (s *Server) handleMarketGet(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	unit, _, err := s.Store.RewardUnit(r.Context(), p.BID)
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"page":    p,
-		"balance": balance,
-		"viewer":  map[string]string{"id": acct.SoopID, "nickname": acct.Nickname},
-		"orders":  orders,
+		"page":       p,
+		"balance":    balance,
+		"viewer":     map[string]string{"id": acct.SoopID, "nickname": acct.Nickname},
+		"orders":     orders,
+		"rewardUnit": unit,
 	})
 	return nil
 }

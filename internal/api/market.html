@@ -12,13 +12,15 @@
 <header><a class="brand" href="/">SoopTalent</a><span id="who" class="muted" style="color:#e9f5ff"></span></header>
 <main class="wrap"><div id="app" class="card empty">시장을 불러오는 중입니다…</div></main>
 <script>
+let rewardUnit = "달란트";
+const unitText = text => String(text ?? "").split("달란트").join(rewardUnit);
 const KEY="sooptalent.token";let token=localStorage.getItem(KEY)||"";const marketToken=location.pathname.split("/").filter(Boolean).pop();let data=null;const cart=new Map();
 const el=(tag,props={},...children)=>{const n=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==="class")n.className=v;else if(k.startsWith("on"))n.addEventListener(k.slice(2).toLowerCase(),v);else n[k]=v}n.append(...children.flat().filter(Boolean).map(x=>typeof x==="string"?document.createTextNode(x):x));return n};
 const num=n=>new Intl.NumberFormat("ko-KR").format(n||0);
-async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{"Content-Type":"application/json",...(token?{Authorization:`Bearer ${token}`}:{})}});const b=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(b.error||`요청 실패 (${r.status})`);e.status=r.status;throw e}return b}
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{"Content-Type":"application/json",...(token?{Authorization:`Bearer ${token}`}:{})}});const b=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(unitText(b.error||`요청 실패 (${r.status})`));e.status=r.status;throw e}return b}
 function parseCallback(){const q=new URLSearchParams(location.hash.slice(1));if(q.get("token")){token=q.get("token");localStorage.setItem(KEY,token);history.replaceState(null,"",location.pathname)}if(q.get("error"))throw new Error(q.get("error"))}
 function login(){location.href=`/api/oauth/soop/start?redirect_uri=${encodeURIComponent(location.origin+location.pathname)}`}
-function closed(message){$(el("div",{class:"notice bad"},message||"이 달란트 시장은 종료되었습니다."))}
+function closed(message){$(el("div",{class:"notice bad"},message||unitText("이 달란트 시장은 종료되었습니다.")))}
 function $(...nodes){const app=document.querySelector("#app");app.replaceChildren(...nodes)}
 function maxFor(it){let max=it.stock==null?1000:Math.max(0,it.stock);if(it.perUserLimit!=null)max=Math.min(max,it.perUserLimit);return max}
 function change(it,by){const n=Math.max(0,Math.min(maxFor(it),Number(cart.get(it.id)||0)+by));n?cart.set(it.id,n):cart.delete(it.id);render()}
@@ -31,15 +33,15 @@ function render(){
     const count=el("output",{},String(q));
     const stockText=it.stock==null?"수량 제한 없음":`남은 총 수량 ${num(it.stock)}`;
     const limitText=it.perUserLimit==null?"인당 제한 없음":`인당 최대 ${num(it.perUserLimit)}개`;
-    items.append(el("article",{class:"item"},it.imageId?el("img",{src:`/api/shop/images/${it.imageId}`,alt:""}):null,el("h3",{},it.name),el("div",{class:"price"},`${num(it.price)} 달란트`),el("div",{class:"stock"},`${stockText} · ${limitText}`),el("div",{class:"qty"},el("button",{onclick:()=>change(it,-1)},"−"),count,el("button",{onclick:()=>change(it,1),disabled:q>=maxFor(it)},"+"))));
+    items.append(el("article",{class:"item"},it.imageId?el("img",{src:`/api/shop/images/${it.imageId}`,alt:""}):null,el("h3",{},it.name),el("div",{class:"price"},unitText(`${num(it.price)} 달란트`)),el("div",{class:"stock"},`${stockText} · ${limitText}`),el("div",{class:"qty"},el("button",{onclick:()=>change(it,-1)},"−"),count,el("button",{onclick:()=>change(it,1),disabled:q>=maxFor(it)},"+"))));
   }
   const lines=[...cart.entries()].map(([id,quantity])=>({itemId:id,quantity}));
   const total=lines.reduce((s,l)=>s+(p.items.find(x=>x.id===l.itemId)?.price||0)*l.quantity,0);
   const cartBox=el("aside",{class:"card cart"},el("h2",{},"선택한 보상"));
   if(!lines.length)cartBox.append(el("div",{class:"empty"},"아직 선택한 보상이 없습니다."));
   else for(const l of lines){const it=p.items.find(x=>x.id===l.itemId);cartBox.append(el("div",{class:"cartline"},el("span",{},`${it.name} ×${l.quantity}`),el("strong",{},`${num(it.price*l.quantity)}`)))}
-  cartBox.append(el("div",{class:"total"},el("span",{},"합계"),el("span",{},`${num(total)} 달란트`)),el("button",{class:"primary",disabled:!lines.length||total>data.balance,onclick:()=>checkout(lines,total)},total>data.balance?"달란트가 부족합니다":"구매하기"));
-  $(el("section",{class:"hero"},el("div",{},el("h1",{},p.title),p.description?el("p",{class:"muted"},p.description):null),el("div",{class:"balance"},`보유 ${num(data.balance)} 달란트`)),el("div",{class:"grid"},el("section",{class:"card"},items),cartBox),marketOrderHistory());
+  cartBox.append(el("div",{class:"total"},el("span",{},"합계"),el("span",{},unitText(`${num(total)} 달란트`))),el("button",{class:"primary",disabled:!lines.length||total>data.balance,onclick:()=>checkout(lines,total)},total>data.balance?`${rewardUnit} 부족`:"구매하기"));
+  $(el("section",{class:"hero"},el("div",{},el("h1",{},p.title),p.description?el("p",{class:"muted"},p.description):null),el("div",{class:"balance"},unitText(`보유 ${num(data.balance)} 달란트`))),el("div",{class:"grid"},el("section",{class:"card"},items),cartBox),marketOrderHistory());
 }
 
 function marketOrderHistory(){
@@ -50,19 +52,22 @@ function marketOrderHistory(){
     const detail=(o.lines||[]).map(l=>l.quantity>1?`${l.itemName} ×${l.quantity}`:l.itemName).join(", ")||o.rejectReason||"—";
     const state=o.status==="fulfilled"?"구매 확정":o.status==="cancelled"?"환불 완료":"거절";
     const canCancel=o.status==="fulfilled"&&o.marketOpen;
-    box.append(el("div",{class:"my-order"},el("div",{class:"meta"},el("strong",{},detail),el("span",{},`${state} · ${num(o.totalPrice)} 달란트`)),canCancel?el("button",{class:"cancel",onclick:()=>cancelOrder(o.id)},"구매 취소"):null));
+    box.append(el("div",{class:"my-order"},el("div",{class:"meta"},el("strong",{},detail),el("span",{},unitText(`${state} · ${num(o.totalPrice)} 달란트`))),canCancel?el("button",{class:"cancel",onclick:()=>cancelOrder(o.id)},"구매 취소"):null));
   }
   return box;
 }
-async function loadMarket(){data=await api(`/api/market/${encodeURIComponent(marketToken)}`);render()}
-async function checkout(lines,total){if(!confirm(`${num(total)} 달란트를 사용해 구매하시겠습니까?`))return;const key=crypto.randomUUID().replaceAll("-","");try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders`,{method:"POST",body:JSON.stringify({requestKey:key,lines})});cart.clear();await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`구매가 완료되었습니다. ${num(r.order.totalPrice)} 달란트가 차감되었습니다.`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
-async function cancelOrder(id){if(!confirm("이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 달란트는 즉시 환불됩니다."))return;try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders/${id}/cancel`,{method:"POST"});await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`${num(r.order.totalPrice)} 달란트를 환불했습니다.`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
+async function loadMarket(){data=await api(`/api/market/${encodeURIComponent(marketToken)}`);rewardUnit=data.rewardUnit||"달란트";document.title=`${rewardUnit} 시장 · SoopTalent`;render()}
+async function checkout(lines,total){if(!confirm(`구매 금액: ${num(total)} ${rewardUnit}\n구매하시겠습니까?`))return;const key=crypto.randomUUID().replaceAll("-","");try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders`,{method:"POST",body:JSON.stringify({requestKey:key,lines})});cart.clear();await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`구매 완료: ${num(r.order.totalPrice)} ${rewardUnit} 차감`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
+async function cancelOrder(id){if(!confirm(`이 구매를 취소할까요?\n\n시장이 열려 있는 동안에만 취소할 수 있으며, 사용한 ${rewardUnit} 전액이 즉시 환불됩니다.`))return;try{const r=await api(`/api/market/${encodeURIComponent(marketToken)}/orders/${id}/cancel`,{method:"POST"});await loadMarket();document.querySelector("#app").prepend(el("div",{class:"notice success"},`${num(r.order.totalPrice)} ${rewardUnit} 환불 완료`))}catch(e){if(e.status===410){closed(e.message);return}alert(e.message)}}
 async function start() {
   try { parseCallback(); }
   catch (e) { $(el("div", { class:"notice bad" }, e.message)); return; }
   const state = await fetch(`/api/market/${encodeURIComponent(marketToken)}/state`);
-  if (state.status === 410) { const b = await state.json().catch(() => ({})); closed(b.error); return; }
-  if (!state.ok) { $(el("div", { class:"notice bad" }, "이 달란트 시장을 찾을 수 없습니다.")); return; }
+  const stateData = await state.json().catch(() => ({}));
+  rewardUnit = stateData.rewardUnit || "달란트";
+  document.title = `${rewardUnit} 시장 · SoopTalent`;
+  if (state.status === 410) { closed(stateData.error); return; }
+  if (!state.ok) { $(el("div", { class:"notice bad" }, unitText("이 달란트 시장을 찾을 수 없습니다."))); return; }
   if (!token) {
     const button = el("button", { class:"primary", onclick:login, disabled:true }, "SOOP으로 로그인");
     const consent = el("input", { type:"checkbox" });
@@ -73,7 +78,7 @@ async function start() {
       el("strong", {}, "(필수)"),
     );
     $(el("section", { class:"login" },
-      el("h1", {}, "달란트 시장"),
+      el("h1", {}, unitText("달란트 시장")),
       el("p", { class:"muted" }, "보상을 구매하려면 SOOP으로 로그인해 주세요."),
       button,
       el("label", { class:"privacy-check" }, consent, consentText),

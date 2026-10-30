@@ -96,6 +96,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/summary", s.approved(s.handleSummary))
 	mux.Handle("GET /api/status", s.approved(s.handleStatus))
 	mux.Handle("PUT /api/collector/chat", s.approved(s.handleSetChat))
+	mux.Handle("PUT /api/streamer/reward-unit", s.approved(s.handleSetRewardUnit))
 
 	s.shopRoutes(mux)
 
@@ -222,10 +223,15 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	unit, configured, err := s.Store.RewardUnit(r.Context(), bid)
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"soopId": acct.SoopID, "nickname": acct.Nickname,
 		"profileImage": acct.ProfileImageURL(), "isAdmin": acct.IsAdmin,
 		"approvedBid": bid, "claims": claims, "linkedProviders": linked,
+		"rewardUnit": unit, "rewardUnitConfigured": configured,
 	})
 	return nil
 }

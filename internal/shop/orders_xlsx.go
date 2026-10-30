@@ -14,11 +14,15 @@ const XLSXContentType = "application/vnd.openxmlformats-officedocument.spreadshe
 
 // OrdersXLSX는 시장의 구매 내역을 Excel 통합 문서로 만든다. 외부 라이브러리 없이
 // 표준 XLSX(Open XML)만 작성해 서버 이미지 크기와 런타임 의존성을 늘리지 않는다.
-func OrdersXLSX(page *Page, orders []Order) ([]byte, error) {
+func OrdersXLSX(page *Page, orders []Order, units ...string) ([]byte, error) {
 	if page == nil {
 		return nil, fmt.Errorf("보상 페이지가 필요합니다")
 	}
 	var out bytes.Buffer
+	unit := "달란트"
+	if len(units) > 0 && strings.TrimSpace(units[0]) != "" {
+		unit = units[0]
+	}
 	zw := zip.NewWriter(&out)
 	// 순서를 고정하면 같은 주문 내역을 다시 내보낼 때 ZIP 구조까지 안정적이다.
 	// (내보낸 시각은 달라질 수 있다.)
@@ -28,7 +32,7 @@ func OrdersXLSX(page *Page, orders []Order) ([]byte, error) {
 		{"xl/workbook.xml", xlsxWorkbook},
 		{"xl/_rels/workbook.xml.rels", xlsxWorkbookRels},
 		{"xl/styles.xml", xlsxStyles},
-		{"xl/worksheets/sheet1.xml", ordersSheetXML(page, orders)},
+		{"xl/worksheets/sheet1.xml", ordersSheetXML(page, orders, unit)},
 	}
 	for _, file := range files {
 		name, content := file.name, file.content
@@ -46,7 +50,7 @@ func OrdersXLSX(page *Page, orders []Order) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func ordersSheetXML(page *Page, orders []Order) string {
+func ordersSheetXML(page *Page, orders []Order, unit string) string {
 	rows := make([]string, 0, len(orders)+5)
 	rows = append(rows,
 		xlsxRow(1, textCell("A1", page.Title+" 구매 내역", 1)),
@@ -54,7 +58,7 @@ func ordersSheetXML(page *Page, orders []Order) string {
 		xlsxRow(3, textCell("A3", "전체 주문 수", 0), numberCell("B3", len(orders), 2)),
 		xlsxRow(5,
 			textCell("A5", "구매 시각", 1), textCell("B5", "시청자 ID", 1), textCell("C5", "닉네임", 1),
-			textCell("D5", "보상", 1), textCell("E5", "결제 달란트", 1), textCell("F5", "상태", 1), textCell("G5", "사유", 1)),
+			textCell("D5", "보상", 1), textCell("E5", "결제 "+unit, 1), textCell("F5", "상태", 1), textCell("G5", "사유", 1)),
 	)
 	for i, order := range orders {
 		r := i + 6

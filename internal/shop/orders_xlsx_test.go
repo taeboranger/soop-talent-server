@@ -74,3 +74,30 @@ func TestOrdersXLSX_페이지없음(t *testing.T) {
 		t.Fatal("페이지가 없을 때 오류가 필요합니다")
 	}
 }
+
+func TestOrdersXLSX_CustomRewardUnit(t *testing.T) {
+	data, err := OrdersXLSX(&Page{Title: "달란트가 들어간 사용자 제목"}, nil, "달러")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		if f.Name == "xl/worksheets/sheet1.xml" {
+			r, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			sheet, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(sheet), "결제 달러") || !strings.Contains(string(sheet), "달란트가 들어간 사용자 제목") {
+				t.Fatal("unit or user title changed incorrectly")
+			}
+		}
+	}
+}

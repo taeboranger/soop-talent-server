@@ -76,6 +76,10 @@ func Log(ctx context.Context, pool *store.DB, bid string, q LogQuery) ([]LogEntr
 //
 //	[2026-08-11 01:23:45] 홍길동(user123) +50 달란트 / 채팅 참여
 func FormatLogLine(e LogEntry) string {
+	return FormatLogLineWithUnit(e, store.DefaultRewardUnit)
+}
+
+func FormatLogLineWithUnit(e LogEntry, unit string) string {
 	who := e.UserID
 	if e.Nickname != "" {
 		who = fmt.Sprintf("%s(%s)", e.Nickname, e.UserID)
@@ -84,8 +88,8 @@ func FormatLogLine(e LogEntry) string {
 	if e.Amount < 0 {
 		sign = "" // 음수는 부호가 이미 붙어 있다
 	}
-	return fmt.Sprintf("[%s] %s %s%d 달란트 / %s",
-		e.OccurredAt.Format("2006-01-02 15:04:05"), who, sign, e.Amount, e.Reason)
+	return fmt.Sprintf("[%s] %s %s%d %s / %s",
+		e.OccurredAt.Format("2006-01-02 15:04:05"), who, sign, e.Amount, unit, e.Reason)
 }
 
 // Grant는 스트리머가 직접 달란트를 주거나 회수한다.

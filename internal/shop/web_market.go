@@ -19,7 +19,7 @@ import (
 var (
 	// ErrMarketClosed는 링크는 존재하지만 스트리머가 시장을 닫은 상태다.
 	// API 계층에서 410 Gone으로 바꿔 시청자 화면이 종료 안내를 보여 준다.
-	ErrMarketClosed = apperr.New("이 달란트 시장은 종료되었습니다")
+	ErrMarketClosed = apperr.New("이 시장은 종료되었습니다")
 	requestKeyRe    = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
 )
 
@@ -42,6 +42,7 @@ type ViewerOrder struct {
 	MarketTitle string `json:"marketTitle"`
 	StreamerID  string `json:"streamerId"`
 	MarketOpen  bool   `json:"marketOpen"`
+	RewardUnit  string `json:"rewardUnit"`
 }
 
 // OrderCancelResult는 시청자가 자기 구매를 취소한 뒤 갱신할 화면 상태다.
@@ -350,7 +351,7 @@ func Checkout(ctx context.Context, pool *store.DB, token, userID, nickname, requ
 		balance = *before
 	}
 	if balance < total {
-		return nil, apperr.Newf("달란트가 부족합니다 (보유 %d / 필요 %d)", balance, total)
+		return nil, apperr.Newf("잔액이 부족합니다 (보유 %d / 필요 %d)", balance, total)
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -524,8 +525,9 @@ func viewerOrders(ctx context.Context, pool *store.DB, userID string, pageID int
 	rows, err := pool.Query(ctx, `
 		SELECT o.id,o.user_id,COALESCE(o.nickname,''),COALESCE(o.comment_no,0),COALESCE(o.raw_comment,''),
 		       o.total_price,o.status,COALESCE(o.reject_reason,''),o.commented_at,o.settled_at,
-		       p.id,p.title,p.bid,(p.status='open')
+		       p.id,p.title,p.bid,(p.status='open'),COALESCE(ru.unit,'달란트')
 		  FROM purchase_orders o JOIN shop_pages p ON p.id=o.page_id
+		  LEFT JOIN streamer_reward_units ru ON ru.bid=p.bid
 		 WHERE o.user_id=$1 AND ($2=0 OR o.page_id=$2)
 		 ORDER BY o.settled_at DESC,o.id DESC
 		 LIMIT 500`, userID, pageID)
@@ -540,7 +542,7 @@ func viewerOrders(ctx context.Context, pool *store.DB, userID string, pageID int
 		var o ViewerOrder
 		if err := rows.Scan(&o.ID, &o.UserID, &o.Nickname, &o.CommentNo, &o.RawComment,
 			&o.TotalPrice, &o.Status, &o.RejectReason, &o.CommentedAt, &o.OrderedAt,
-			&o.PageID, &o.MarketTitle, &o.StreamerID, &o.MarketOpen); err != nil {
+			&o.PageID, &o.MarketTitle, &o.StreamerID, &o.MarketOpen, &o.RewardUnit); err != nil {
 			return nil, err
 		}
 		index[o.ID] = len(out)
